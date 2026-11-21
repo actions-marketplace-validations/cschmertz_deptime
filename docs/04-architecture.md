@@ -47,7 +47,7 @@ DepTime is **local-first** ([ADR 0007](adr/0007-open-source-local-first.md)). Th
 | `deptime/ingest/pypi.py` | PEP 691 client, version policy, artifact choice, download, safe extraction |
 | `deptime/ingest/snapshot.py` | griffe → `ApiSnapshot`: public import paths, kinds, params, deprecation text |
 | `deptime/ingest/diff.py`, `replacements.py` | Change events; "use X instead" mining, including at parameter level |
-| `deptime/ingest/pipeline.py` | One package end to end; snapshot cache; rebuilds from cache when PyPI is down; never wipes on empty runs |
+| `deptime/ingest/pipeline.py` | One package end to end; snapshot cache; rebuilds its indexed releases from cache when PyPI is down; never wipes on empty runs |
 | `deptime/index/schema.sql`, `store.py` | SQLite schema (span encoding), atomic per-package rebuild, read queries |
 | `deptime/index/distribution.py` | `pack` (publish), `download`/`ensure_index` (consume), background refresh with hot swap |
 | `deptime/tracebacks.py` | Traceback → `ErrorSignal` (stdlib only, capped input) |
@@ -74,6 +74,8 @@ The full schema is in `src/deptime/index/schema.sql`.
 - **`replacements`**: candidates per symbol, or per `func(param)`, with confidence, source and evidence.
 - **Snapshots** (`.json.gz`) are the immutable intermediate. CI caches them, so a scheduled run only analyses new releases, and the whole index can be rebuilt from them after any change to the diff logic.
   - Each covered package gets its own CI job, with its own runner, log and snapshot cache, so one heavy package can't take the others down. These jobs only build snapshots (`deptime ingest --snapshots-only`). A final job assembles the index from their snapshots with `deptime ingest --all --cached-only`, which never downloads or analyses a release (DT-DATA-03).
+  - That job starts from the published index, so a release whose snapshot failed tonight keeps its rows (DT-DATA-12). It installs it with `--verify` and stops if the pull fails (DT-OSS-21): a file uploaded by hand would otherwise be signed with the build, and the snapshots alone would drop the releases only the index keeps. The first build after an index schema change is dispatched with `fresh`, which starts from nothing.
+  - A snapshot is written beside its file and moved into place, and one that doesn't read back counts as not cached (DT-DATA-85).
   - The index rebuild streams snapshots from disk in version order, holding at most two, so memory doesn't grow with a package's release count.
   - Each package's rows are stored with a fingerprint of what they were assembled from: a hash of its snapshot files, release dates, coverage entry and the assembly code. A package whose fingerprint matches this run's inputs keeps its rows, so a scheduled run assembles only the packages with a new release (DT-DATA-41). Rows that took anything from the index itself have no fingerprint and are always rebuilt.
 

@@ -67,6 +67,22 @@ are data: they can grow in any release.)
   `ClientResult` and `ServerRequest`, `RequestParams.Meta` → `RequestParamsMeta`, the `mcp.server.fastmcp` module →
   `mcp.server.mcpserver`, `FastMCPError` → `MCPServerError`, and `Context.fastmcp` → `Context.mcp_server` (#49).
 
+### Fixed
+- `deptime ingest` (for maintainers and self-builders, DT-DATA-85):
+  - a snapshot is written beside its file and moved into place, and a cached one that doesn't read back (cut short
+    by a killed job or a full disk) is built again; it stopped every later run at that release;
+  - when PyPI can't be reached, a package's releases already in the index are rebuilt, not every snapshot on disk,
+    which brought back yanked and out-of-policy releases; the release list is asked for three times first;
+  - an sdist whose folder links loop back no longer hangs the analysis, and neither does a string with a long run of
+    backslashes; the snapshots built are otherwise the same;
+  - an error's text is logged on one line, and archive members whose names have control characters are skipped, so
+    a crafted file name can't write GitHub Actions workflow commands into the build log.
+
+### Security
+- The twice-daily build starts from the published index only after checking its signed provenance
+  (`index pull --verify`), and stops if it can't, instead of going on from the snapshots alone. A file uploaded to
+  the release by hand was carried into the next build and signed with it (DT-OSS-21).
+
 ## [1.1.1] - 2026-11-21
 
 ### Fixed

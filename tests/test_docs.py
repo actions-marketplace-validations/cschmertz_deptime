@@ -45,3 +45,16 @@ def test_the_action_runs_this_release_and_keeps_inputs_out_of_scripts():
     assert re.findall(r'default: "deptime==([^"]+)"', action) == [__version__]
     runs = re.findall(r"run: \|\n((?:        .*\n|\n)+)|run: (.*)", action)
     assert runs and all("${{" not in block + line for block, line in runs)
+
+
+def test_every_workflow_installs_the_index_only_once_its_provenance_is_verified():
+    """B2, N1: build-index starts from the published index, then signs what it builds. Without `--verify` it would
+    sign a file uploaded by hand; with a fallback after a failed pull, it would build from the snapshots alone and
+    drop the releases only the published index keeps."""
+    pulls = []
+    for path in sorted((ROOT / ".github" / "workflows").glob("*.yml")):
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if re.search(r"\buv run .*deptime index pull", line):
+                pulls.append(path.name)
+                assert "--verify" in line and "||" not in line, f"{path.name}: {line.strip()}"
+    assert {"bench.yml", "build-index.yml", "pages.yml"} <= set(pulls)

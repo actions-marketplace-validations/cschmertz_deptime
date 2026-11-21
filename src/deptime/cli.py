@@ -58,7 +58,7 @@ def _print(model) -> None:
 
 def cmd_ingest(args: argparse.Namespace, settings: Settings) -> int:
     from deptime.index.distribution import adopt_downloaded, mark_locally_built, read_local_meta
-    from deptime.ingest.pipeline import IngestReport, coverage_summary, ingest_package
+    from deptime.ingest.pipeline import IngestReport, coverage_summary, ingest_package, one_line
 
     coverage = load_coverage(settings.coverage_file)
     names = [p.name for p in coverage.packages] if args.all else args.packages
@@ -95,7 +95,7 @@ def cmd_ingest(args: argparse.Namespace, settings: Settings) -> int:
                 log=_err,
             )
         except Exception as exc:  # one broken package must not stop the rest of the run
-            _err(f"[{name}] FAILED: {type(exc).__name__}: {exc}")
+            _err(f"[{name}] FAILED: {type(exc).__name__}: {one_line(str(exc))}")
             failures += 1
             reports.append(IngestReport(name, failed={"*": f"{type(exc).__name__}: {exc}"}))
             continue

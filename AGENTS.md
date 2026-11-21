@@ -49,7 +49,7 @@ The default home is `$XDG_CACHE_HOME/deptime`, else `~/.cache/deptime` (override
    - never damage the current index when a download fails.
 6. **Ingestion must never lose data:**
    - an empty run doesn't wipe an index;
-   - a PyPI outage rebuilds from cached snapshots;
+   - a PyPI outage rebuilds from cached snapshots (only the releases already indexed, if there are any);
    - one package's failure doesn't stop the run.
 7. **Version semantics:**
    - `pin_to_restore` uses `<=last_version_with`;
