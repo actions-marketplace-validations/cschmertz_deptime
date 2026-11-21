@@ -61,7 +61,19 @@ are data: they can grow in any release.)
 
 ## [Unreleased]
 
+### Fixed
+- `explain_error` answers a traceback whose line number, or argument count, runs to thousands of digits; Python
+  refused to read the number, so the call failed (DT-CORE-84).
+- `deptime serve`'s JSON API checks a request body against the MCP tools' own parameter types and limits, and
+  answers a body of the wrong shape (a list, a number where text goes, `"limit": null`) with `400 bad_request`
+  instead of a server error. Names the tools don't take are still ignored; a missing argument's 400 now lists the
+  problems under `detail` (DT-HOST-06).
+
 ### Security
+- `deptime serve --host` also sets which host names `/mcp` answers. The MCP transport's Host/Origin check, which
+  stops DNS rebinding, followed `DEPTIME_HOST` alone: `--host 0.0.0.0` refused every request not addressed to
+  localhost, and `--host 127.0.0.1` with `DEPTIME_HOST=0.0.0.0` ran a loopback server without the check
+  (DT-HOST-06).
 - A release reaches PyPI only from a `v*` tag on `main`: the publishing environment accepts only `v*` tags, and
   the job checks that the tagged commit is on `main`. `main` and release tags can't be force-pushed or deleted
   (DT-OSS-22).

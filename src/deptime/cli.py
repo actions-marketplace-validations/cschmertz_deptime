@@ -363,11 +363,15 @@ def cmd_mcp(args: argparse.Namespace, settings: Settings) -> int:
 
 
 def cmd_serve(args: argparse.Namespace, settings: Settings) -> int:
+    from dataclasses import replace
+
     import uvicorn
 
     from deptime.server.http_app import create_app
 
-    uvicorn.run(create_app(settings), host=args.host or settings.host, port=args.port or settings.port)
+    # One host for both: the MCP transport checks Host/Origin only when the app is told it serves loopback (D3).
+    settings = replace(settings, host=args.host or settings.host, port=args.port or settings.port)
+    uvicorn.run(create_app(settings), host=settings.host, port=settings.port)
     return 0
 
 

@@ -6,12 +6,12 @@ these strings alone. Keep them concrete, keep the "when to call" first, and re-r
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Annotated, Any, Literal
 
 from mcp.server import MCPServer
 from mcp.types import ToolAnnotations
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 from deptime import __version__
 from deptime.models import (
@@ -46,6 +46,13 @@ READ_ONLY = ToolAnnotations(read_only_hint=True, idempotent_hint=True, open_worl
 def build_mcp(
     deptime: DepTime, *, middleware: Sequence[Any] = (), website_url: str | None = None
 ) -> MCPServer:
+    return build_mcp_and_tools(deptime, middleware=middleware, website_url=website_url)[0]
+
+
+def build_mcp_and_tools(
+    deptime: DepTime, *, middleware: Sequence[Any] = (), website_url: str | None = None
+) -> tuple[MCPServer, dict[str, Callable[..., BaseModel]]]:
+    """The MCP server, and its tool functions by name: the REST API checks a body against their parameters (D5)."""
     mcp = MCPServer(
         name="deptime",
         title="DepTime",
@@ -251,4 +258,5 @@ def build_mcp(
     def coverage() -> CoverageResult:
         return deptime.coverage_report()
 
-    return mcp
+    tools = (explain_error, symbol_history, check_symbols, diff_versions, check_upgrade, coverage)
+    return mcp, {fn.__name__: fn for fn in tools}

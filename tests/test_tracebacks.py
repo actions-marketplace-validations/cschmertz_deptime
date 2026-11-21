@@ -884,3 +884,30 @@ def test_django_import_string_message_after_its_frames():
         "HiredisParser",
         "ImportError",
     )
+
+
+def test_a_line_number_too_long_to_be_real_is_recorded_as_0(dt):
+    """F4: Python's `int()` refuses more than 4,300 digits, so a frame line with a longer line number made
+    `explain_error` fail instead of answering (an MCP error; a 500 from `deptime serve`)."""
+    huge = "9" * 5_000
+    shapes = [
+        HTTPX_TB.replace("line 3,", f"line {huge},"),
+        PYTEST_TB.replace("core.py:3353:", f"core.py:{huge}:").replace("core.py:2425:", f"core.py:{huge}:"),
+        IPYTHON_TB.replace("3353", huge),
+    ]
+    for text in shapes:
+        s = parse_traceback(text)
+        assert s is not None and s.kind == "unexpected_kwarg", text[:80]
+        assert 0 in [f.line for f in s.frames]
+    assert parse_traceback(shapes[2]).frames[0].code == 'rv += f" {self.make_metavar(ctx=ctx)}"'
+    assert (
+        dt.explain_error(shapes[0], {"httpx": "0.28.1"}).findings[0].symbol
+        == "httpx.Client.__init__(proxies)"
+    )
+    # The same for the counts in a too-many-positional message: no real call passes that many.
+    count = HTTPX_TB.replace(
+        "Client.__init__() got an unexpected keyword argument 'proxies'",
+        f"Client.__init__() takes 1 positional argument but {huge} were given",
+    )
+    assert parse_traceback(count).kind == "too_many_positional"
+    assert dt.explain_error(count, {"httpx": "0.28.1"}).findings == []

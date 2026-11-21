@@ -173,9 +173,10 @@ OTHER_CAUSE = (
     " If no newer release changed it, the error has another cause (a different interpreter or venv, a shadowing"
     " local module, or a lazily-imported optional dependency)."
 )
-# "f() takes 2 positional arguments but 3 were given" (DT-CORE-09): the counts include a method's instance.
+# "f() takes 2 positional arguments but 3 were given" (DT-CORE-09): the counts include a method's instance. At most
+# 9 digits, so `int()` never meets one it refuses (over 4,300 digits, F4); no real call passes more.
 POSITIONAL_COUNT_RE = re.compile(
-    r"takes (?:from \d+ to )?(?P<takes>\d+) positional arguments? but (?P<given>\d+) (?:were|was) given"
+    r"takes (?:from \d+ to )?(?P<takes>\d{1,9}) positional arguments? but (?P<given>\d{1,9}) (?:were|was) given"
 )
 POSITIONAL_KINDS = {"positional-only", "positional or keyword"}
 # Where a user asks for a package DepTime doesn't index (DT-OSS-11).
