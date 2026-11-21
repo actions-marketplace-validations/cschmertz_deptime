@@ -2629,6 +2629,55 @@ target = "scope"
 quote = "`ClientCredentialsOAuthProvider` and `PrivateKeyJWTOAuthProvider` took the requested scope as a keyword named `scopes` … The parameter is now `scope`, matching the RFC 6749 wire parameter, `OAuthClientMetadata.scope`, and the newer `IdentityAssertionOAuthProvider`."
 url = "https://github.com/modelcontextprotocol/python-sdk/blob/main/docs/migration.md#scopes-renamed-to-scope-on-the-client-credentials-providers"
 
+[[hint]]
+package = "mcp"
+path = "mcp.types.ClientNotificationType"
+target = "mcp.types.ClientNotification"
+quote = "| `ClientRequestType`, `ClientNotificationType`, `ClientResultType`, `ServerRequestType`, `ServerNotificationType`, `ServerResultType` | The union is now the bare name: `ClientRequest`, `ClientNotification`, `ClientResult`, `ServerRequest`, `ServerNotification`, `ServerResult` |"
+url = "https://github.com/modelcontextprotocol/python-sdk/blob/main/docs/migration.md#removed-type-aliases-and-classes"
+
+[[hint]]
+package = "mcp"
+path = "mcp.types.ClientResultType"
+target = "mcp.types.ClientResult"
+quote = "| `ClientRequestType`, `ClientNotificationType`, `ClientResultType`, `ServerRequestType`, `ServerNotificationType`, `ServerResultType` | The union is now the bare name: `ClientRequest`, `ClientNotification`, `ClientResult`, `ServerRequest`, `ServerNotification`, `ServerResult` |"
+url = "https://github.com/modelcontextprotocol/python-sdk/blob/main/docs/migration.md#removed-type-aliases-and-classes"
+
+[[hint]]
+package = "mcp"
+path = "mcp.types.ServerRequestType"
+target = "mcp.types.ServerRequest"
+quote = "| `ClientRequestType`, `ClientNotificationType`, `ClientResultType`, `ServerRequestType`, `ServerNotificationType`, `ServerResultType` | The union is now the bare name: `ClientRequest`, `ClientNotification`, `ClientResult`, `ServerRequest`, `ServerNotification`, `ServerResult` |"
+url = "https://github.com/modelcontextprotocol/python-sdk/blob/main/docs/migration.md#removed-type-aliases-and-classes"
+
+[[hint]]
+package = "mcp"
+path = "mcp.types.RequestParams.Meta"
+target = "mcp.types.RequestParamsMeta"
+quote = "The nested `RequestParams.Meta` Pydantic model class has been replaced with a top-level `RequestParamsMeta` TypedDict."
+url = "https://github.com/modelcontextprotocol/python-sdk/blob/main/docs/migration.md#requestparamsmeta-replaced-with-requestparamsmeta-typeddict"
+
+[[hint]]
+package = "mcp"
+path = "mcp.server.fastmcp"
+target = "mcp.server.mcpserver"
+quote = "All submodules under `mcp.server.fastmcp.*` are now under `mcp.server.mcpserver.*` with the same structure."
+url = "https://github.com/modelcontextprotocol/python-sdk/blob/main/docs/migration.md#fastmcp-renamed-to-mcpserver"
+
+[[hint]]
+package = "mcp"
+path = "mcp.server.fastmcp.exceptions.FastMCPError"
+target = "mcp.server.mcpserver.exceptions.MCPServerError"
+quote = "`MCPServerError` (renamed from `FastMCPError`) — from `mcp.server.mcpserver.exceptions`"
+url = "https://github.com/modelcontextprotocol/python-sdk/blob/main/docs/migration.md#fastmcp-renamed-to-mcpserver"
+
+[[hint]]
+package = "mcp"
+path = "mcp.server.fastmcp.Context.fastmcp"
+target = "mcp.server.mcpserver.Context.mcp_server"
+quote = "The `ctx.fastmcp` property is now `ctx.mcp_server`."
+url = "https://github.com/modelcontextprotocol/python-sdk/blob/main/docs/migration.md#fastmcp-renamed-to-mcpserver"
+
 # fastmcp-4
 [[hint]]
 package = "fastmcp"
