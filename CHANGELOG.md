@@ -61,6 +61,39 @@ are data: they can grow in any release.)
 
 ## [Unreleased]
 
+### Fixed
+- `deptime index pull --force` replaces a damaged index file of the current build. The file is named after the build,
+  so a fresh download of the same build was thrown away when a file of that name was already there, and `--verify`
+  then recorded "build provenance verified" for a file it hadn't checked. The fresh download is now installed unless
+  the file has the same bytes (DT-OSS-20).
+- A download is checked more carefully before it is installed: decompressing stops past 50 times the downloaded size
+  (the index is about 15 times its `.xz`), so a small crafted file can't fill the disk; a file with views or
+  triggers, which the index never has, is refused, and the checks are cut off after 30 seconds instead of hanging
+  the background refresh (DT-OSS-20).
+- The temp files of a download that was interrupted (closing the MCP client during the first download or a daily
+  refresh) are deleted at the next start; they stayed for ever, up to about 860 MB each time (DT-OSS-20).
+- Index metadata without a readable check time no longer stops the background refresh, and a check time in the
+  future (a clock that was ahead) no longer keeps the index from being refreshed (DT-OSS-20).
+- With `DEPTIME_VERIFY_INDEX=1` (or `--verify`) and no `gh` on PATH, or an index not served from a GitHub release,
+  the download is refused before the file is downloaded, instead of after it on every start (DT-OSS-20).
+- `deptime index pull` reports a malformed manifest, a damaged download whose checksum matched, and a full disk as a
+  one-line error, not a traceback; as before, nothing is installed and the current index is kept (DT-OSS-20).
+
+### Security
+- Untrusted text from libraries is cleaned more thoroughly (DT-CORE-83). `!![a](url)` no longer turns into a live
+  Markdown image after cleaning; HTML with an attribute that fetches a URL (`<img src=...>`, `style=`, `poster=`) is
+  shown as text; and the characters Unicode marks as ignorable that aren't format characters (the combining grapheme
+  joiner, Hangul fillers, Mongolian variation selectors) are removed, so they no longer hide instruction-like text from
+  the filter. A changelog link whose URL cleaning would change is dropped, and a Requires-Dist marker quoted in a
+  `check_symbols` hint is cleaned. No text in the published index changes.
+- The Docker image no longer sets `DEPTIME_TRUST_PROXY_HEADERS=true`: a container run without a proxy in front of it
+  took any address a client put in `X-Forwarded-For`, which defeated the per-IP limits. `fly.toml` sets it, as Fly's
+  proxy appends the header (DT-HOST-05).
+
+### Changed
+- The docs say what `DEPTIME_OFFLINE=1` does: it turns off automatic downloads; `deptime index pull` and
+  `deptime ingest` still use the network when run.
+
 ## [1.1.0] - 2026-11-21
 
 ### Added

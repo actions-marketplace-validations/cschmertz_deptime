@@ -25,7 +25,7 @@ which of a project's code a dependency update breaks. Everything done before 202
   51.4 MB and the `.gz` 79.2 MB. `build-index` runs at 04:17 and 16:17 UTC, replaces the rolling `index` release and
   signs it. A build with no extraction change usually takes under 20 minutes; a `SNAPSHOT_FORMAT` bump means one cold
   build of about 3 hours (format 27's: 2 h 48 min).
-- **Checks that run without anyone:** `ci` on every push (623 offline tests), and `bench` on every code change and
+- **Checks that run without anyone:** `ci` on every push (666 offline tests), and `bench` on every code change and
   every published index. `bench` fails on a benchmark drop of more than 2 points, a traceback case that passed in the
   baseline and fails now, or a false-positive rate up by more than 1, and on the published index itself (`tests/test_golden.py`, DT-QA-03): older than 48 h, a package's newest
   release on PyPI for more than 24 h without being indexed, or a Tier A package's newest release without the names
@@ -144,6 +144,15 @@ in-sample run flags 0 of 3,291 working uses and fails no pull request without a 
   are counted as unread.
 - [x] **DT-CORE-82** (2026-11-21): `installed_as` distributions (`pydantic-ai`, `typer-slim`, ...) are checked as
   the covered package.
+- [x] **DT-OSS-20** (2026-11-21): the index download replaces a damaged file of the current build (and records
+  provenance only for verified bytes), caps decompression, refuses views and triggers, deletes an interrupted
+  download's temp files, survives odd metadata times, refuses `--verify` before downloading when it can't verify,
+  and reports a bad manifest, a damaged file or a full disk without a traceback.
+- [x] **DT-CORE-83** (2026-11-21): untrusted text: every `!` before `[` and HTML attributes that fetch a URL are
+  defused, the other default-ignorable characters removed; a changelog URL cleaning would change, and a
+  Requires-Dist marker in a hint, go through the same check. No text in the published index changes.
+- [x] **DT-HOST-05** (2026-11-21): the Docker image no longer trusts `X-Forwarded-For` by default; `fly.toml`,
+  behind Fly's proxy, sets it.
 
 **Phase 4, the fix (the model's part, outside DepTime): done.** DT-QA-27 met its bar on broken updates nobody had
 seen (`bench/agent-fix/qa27/results-2026-11-17.md`). Held from it: DepTime doesn't check a pydantic model's required

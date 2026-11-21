@@ -275,7 +275,8 @@ def cmd_index(args: argparse.Namespace, settings: Settings) -> int:
                 manifest = dist.fetch_manifest(settings.index_url, client)
                 installed = local and dist.active_index(settings.index_path).exists()
                 current = installed and local.get("manifest", {}).get("sha256") == manifest.sha256
-                # A current index installed without verifying is downloaded again, so the file is checked.
+                # A current index installed without verifying is downloaded again and verified, and its file
+                # replaced unless it has the verified bytes.
                 if current and not args.force and (not verify or local.get("provenance")):
                     checked = ", build provenance verified" if local.get("provenance") else ""
                     _err(f"deptime: index already up to date (built {manifest.built_at}{checked})")
@@ -286,7 +287,8 @@ def cmd_index(args: argparse.Namespace, settings: Settings) -> int:
             except (dist.ProvenanceError, dist.IndexIncompatible) as exc:
                 _err(f"deptime: {str(exc).rstrip('.')}. {_UNCHANGED}")
                 return 1
-            except (httpx.HTTPError, ValueError) as exc:  # network, HTTP status, checksum, size, a bad file
+            # network, HTTP status, checksum, size, a bad manifest or file; OSError: a full disk, a file in use
+            except (httpx.HTTPError, ValueError, OSError) as exc:
                 if isinstance(exc, httpx.HTTPStatusError):  # a redirect's signed query string stays out
                     url = exc.request.url.copy_with(query=None)
                     reason = f"HTTP {exc.response.status_code} {exc.response.reason_phrase} from {url}"

@@ -4,8 +4,9 @@ DepTime's answers are read by coding agents, so text from library source reaches
 deprecation messages, replacement evidence, signature defaults and annotations. The covered packages are well
 known, but one compromised release could put text aimed at that agent into a deprecation warning. Every such
 field passes through `untrusted_text` on its way out (`models.py`): characters that render as nothing or
-reorder text are removed, whitespace is collapsed, length is capped, and text that reads like instructions to
-an assistant is withheld, along with any replacement mined from it (`query.py`).
+reorder text are removed, whitespace is collapsed, length is capped, images and HTML that would fetch a URL
+when rendered are defused, and text that reads like instructions to an assistant is withheld, along with any
+replacement mined from it (`query.py`).
 
 The instruction patterns are a speed bump, not a guarantee: the field descriptions also tell agents that the
 text is data to quote, never to follow.
@@ -53,10 +54,22 @@ _INSTRUCTION_RE = re.compile(
 # surrogate and unassigned code points, and variation selectors, which can carry hidden bytes after a visible
 # character. Control characters (newlines, tabs, NUL, ESC) become spaces.
 _REMOVED = {"Cf", "Co", "Cs", "Cn"}
+# Unicode's other default-ignorable characters, which render as nothing but aren't format characters: the
+# combining grapheme joiner, Hangul fillers, Khmer inherent vowels and Mongolian variation selectors.
+_IGNORABLE = frozenset("\u034f\u115f\u1160\u17b4\u17b5\u180b\u180c\u180d\u180f\u3164\uffa0")
+
+# Markdown images (`![a](url)`, also after more `!`) and HTML attributes that fetch a URL when a client renders the
+# text: both can send data to a server. Images become links; such a tag's `<` is escaped, so it shows as text.
+_IMAGE_RE = re.compile(r"!+\[")
+_FETCHING_TAG_RE = re.compile(
+    r"<(?=[A-Za-z][\w:-]*\s[^<>]*?\b(?:src|srcset|href|xlink:href|data|poster|background|style|action"
+    r"|formaction)\s*=)",
+    re.IGNORECASE,
+)
 
 
 def _visible(c: str) -> str:
-    if 0xFE00 <= ord(c) <= 0xFE0F or 0xE0100 <= ord(c) <= 0xE01EF:
+    if 0xFE00 <= ord(c) <= 0xFE0F or 0xE0100 <= ord(c) <= 0xE01EF or c in _IGNORABLE:
         return ""
     category = unicodedata.category(c)
     return "" if category in _REMOVED else " " if category == "Cc" else c
@@ -73,12 +86,14 @@ def instruction_like(text: str | None) -> bool:
 
 def untrusted_text(text: str | None, limit: int = MAX_CHARS) -> str | None:
     """`text` as an answer may carry it: visible characters only, whitespace collapsed, capped at `limit`,
-    Markdown images turned into plain links, or `WITHHELD` if it reads like instructions."""
+    Markdown images turned into plain links and HTML that fetches a URL shown as text, or `WITHHELD` if it reads
+    like instructions."""
     if text is None:
         return None
     if instruction_like(text):
         return WITHHELD
-    cleaned = " ".join("".join(map(_visible, text)).split()).replace("![", "[")
+    cleaned = " ".join("".join(map(_visible, text)).split())
+    cleaned = _FETCHING_TAG_RE.sub("&lt;", _IMAGE_RE.sub("[", cleaned))
     return cleaned if len(cleaned) <= limit else cleaned[: limit - 1] + "…"
 
 

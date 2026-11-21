@@ -14,9 +14,14 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from pathlib import Path
 
 from deptime.index.store import IndexStore
+
+# A temp file untouched this long belongs to a download that was interrupted, not one under way: a download writes
+# continuously, and the steps after it (verifying, decompressing, checking) take minutes at most.
+LEFTOVER_AGE_SECONDS = 3600.0
 
 
 def meta_path(index_path: Path) -> Path:
@@ -71,3 +76,21 @@ def remove_stale(index_path: Path) -> list[Path]:
         except OSError:  # open in a running server (Windows)
             left.append(path)
     return left
+
+
+def remove_leftovers(index_path: Path, max_age: float = LEFTOVER_AGE_SECONDS) -> None:
+    """Delete the temp files of downloads that were interrupted (`<index>.download-*`, a metadata write's
+    `<index>.meta.json.*.tmp`): the background refresh runs in a daemon thread, which stops without cleaning up
+    when the process exits. Files touched within `max_age` seconds may belong to a download under way and stay."""
+    cutoff = time.time() - max_age
+    folder, name = index_path.parent, index_path.name
+    try:
+        candidates = [*folder.glob(f"{name}.download-*"), *folder.glob(f"{name}.meta.json.*.tmp")]
+    except OSError:
+        return
+    for path in candidates:
+        try:
+            if path.is_file() and path.stat().st_mtime < cutoff:
+                path.unlink()
+        except OSError:  # gone already, open elsewhere (Windows), or a read-only folder
+            continue

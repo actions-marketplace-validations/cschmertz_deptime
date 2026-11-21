@@ -4,6 +4,7 @@ primary_region = "iad"
 
 [env]
   DEPTIME_PUBLIC_URL = "https://deptime.fly.dev"
+  DEPTIME_TRUST_PROXY_HEADERS = "true"  # every request comes through Fly's proxy
   DEPTIME_CLIENT_IP_HEADER = "Fly-Client-IP"  # set by Fly's proxy; used for per-IP rate limits
 
 [[mounts]]

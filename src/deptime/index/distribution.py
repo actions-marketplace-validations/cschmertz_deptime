@@ -11,8 +11,10 @@ manifest lists it (DT-DATA-35). The `.gz` is for released clients, which read on
 (`sha256` and `size` describe the `.gz`), and for a Python built without `lzma`.
 
 Safety rules:
-- the download is verified against the manifest's sha256 for that file, decompressed to a temp file, validated,
-  then atomically renamed into place; a failed download never damages the current index;
+- the download is verified against the manifest's sha256 for that file, decompressed to a temp file (capped at
+  `MAX_EXPANSION` times its size), validated (no views or triggers, within `VALIDATE_SECONDS`), then atomically
+  renamed into place; a failed download never damages the current index, and an interrupted one's temp files
+  are deleted later (`remove_leftovers`);
 - the new file gets a name of its own (`index-<sha>.sqlite`), and the metadata file names it, so no file a
   server holds open is ever replaced (Windows forbids it; DT-OSS-08, see `location.py`);
 - an index built locally with `deptime ingest` carries no download metadata and is never replaced automatically.
@@ -39,6 +41,7 @@ import sys
 import tempfile
 import threading
 import time
+import zlib
 from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
@@ -54,12 +57,13 @@ from deptime.index.location import (
     meta_path,
     open_index,
     read_local_meta,
+    remove_leftovers,
     remove_stale,
     versioned_name,
 )
 from deptime.index.store import READABLE_SCHEMA_VERSIONS, IndexStore
 
-__all__ = ["active_index", "meta_path", "open_index", "read_local_meta", "remove_stale"]
+__all__ = ["active_index", "meta_path", "open_index", "read_local_meta", "remove_leftovers", "remove_stale"]
 
 try:
     import lzma
@@ -74,6 +78,12 @@ XZ_ASSET = "index.sqlite.xz"
 MANIFEST_ASSET = "manifest.json"
 MAX_DOWNLOAD_BYTES = 2 * 1024**3
 XZ_PRESET = 6  # 9 saves ~1% for a 64 MB decompression dictionary
+# Decompression stops past MAX_EXPANSION times the downloaded size (the index is ~15x its .xz and ~10x its .gz),
+# but never below MIN_EXPANSION_CAP or above MAX_INDEX_BYTES, so a small crafted file can't fill the disk.
+MAX_EXPANSION = 50
+MIN_EXPANSION_CAP = 64 * 1024**2
+MAX_INDEX_BYTES = 16 * 1024**3
+VALIDATE_SECONDS = 30.0  # the checks take milliseconds on the real index
 
 # What `--verify` accepts (DT-OSS-09): an attestation signed in a GitHub Actions run of this workflow on main.
 ATTESTATION_ASSET = "index.sigstore.json"
@@ -107,8 +117,32 @@ class Manifest:
     xz_size: int | None = None  # bytes of index.sqlite.xz
 
     @classmethod
-    def from_dict(cls, data: dict) -> Manifest:
-        return cls(**{name: data[name] for name in cls.__dataclass_fields__ if name in data})
+    def from_dict(cls, data: object) -> Manifest:
+        """Raises ValueError for a manifest that is missing a key or has one of the wrong type."""
+        if not isinstance(data, dict):
+            raise ValueError("the index manifest isn't a JSON object")
+        fields = {name: data[name] for name in cls.__dataclass_fields__ if name in data}
+        for name, kind, optional in _MANIFEST_TYPES:
+            value = fields.get(name)
+            if value is None and optional:
+                continue
+            if not isinstance(value, kind) or isinstance(value, bool):
+                raise ValueError(f"the index manifest's `{name}` is missing or not a {kind.__name__}")
+        return cls(**fields)
+
+
+# (field, type, may be absent) for each field `Manifest.from_dict` reads
+_MANIFEST_TYPES = (
+    ("schema_version", str, False),
+    ("built_at", str, False),
+    ("sha256", str, False),
+    ("size", int, False),
+    ("packages", int, False),
+    ("releases", int, False),
+    ("deptime_version", str, False),
+    ("xz_sha256", str, True),
+    ("xz_size", int, True),
+)
 
 
 @dataclass(frozen=True)
@@ -226,17 +260,26 @@ def pack(index_path: Path, out_dir: Path) -> Manifest:
 
 # ---------------------------------------------------------------- consume side
 def fetch_manifest(base_url: str, client: httpx.Client) -> Manifest:
+    """Raises httpx.HTTPError, or ValueError for a manifest that isn't valid JSON of the expected shape."""
     resp = client.get(f"{base_url}/{MANIFEST_ASSET}")
     resp.raise_for_status()
-    return Manifest.from_dict(resp.json())
+    return Manifest.from_dict(resp.json())  # json.JSONDecodeError is a ValueError
 
 
 def _validate(path: Path) -> None:
+    """Check a downloaded file before it is installed. It is untrusted until then: the index never has views or
+    triggers (a view runs any query its author wrote, one that never ends included), and the checks are cut off
+    after `VALIDATE_SECONDS`."""
     try:
         store = IndexStore.open(path)
     except sqlite3.DatabaseError as exc:
         raise ValueError(f"downloaded index is not a SQLite database: {exc}") from exc
+    deadline = time.monotonic() + VALIDATE_SECONDS
+    store.conn.set_progress_handler(lambda: time.monotonic() > deadline, 10_000)
     try:
+        code = store.conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE type IN ('view', 'trigger')")
+        if code.fetchone()[0]:
+            raise ValueError("downloaded index has views or triggers, which DepTime's index never has")
         row = store.conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
         if row is None or row["value"] not in READABLE_SCHEMA_VERSIONS:
             raise IndexIncompatible(
@@ -248,6 +291,36 @@ def _validate(path: Path) -> None:
         raise ValueError(f"downloaded index is unreadable: {exc}") from exc
     finally:
         store.close()
+
+
+def _expansion_cap(packed_size: int) -> int:
+    """The most bytes a download of `packed_size` bytes may decompress to."""
+    return min(max(packed_size * MAX_EXPANSION, MIN_EXPANSION_CAP), MAX_INDEX_BYTES)
+
+
+def _copy_capped(src: IO[bytes], dst: IO[bytes], cap: int) -> None:
+    written = 0
+    while chunk := src.read(1 << 20):
+        written += len(chunk)
+        if written > cap:
+            raise ValueError(f"the downloaded index expands to more than {cap} bytes; refusing to install it")
+        dst.write(chunk)
+
+
+# What a damaged .xz or .gz raises while it is read (a gzip.BadGzipFile is also an OSError, so it is named here)
+_DECOMPRESS_ERRORS: tuple[type[Exception], ...] = (EOFError, zlib.error, gzip.BadGzipFile) + (
+    (lzma.LZMAError,) if lzma is not None else ()
+)
+
+
+def _same_bytes(a: Path, b: Path) -> bool:
+    if a.stat().st_size != b.stat().st_size:
+        return False
+    with a.open("rb") as fa, b.open("rb") as fb:
+        while chunk := fa.read(1 << 20):
+            if chunk != fb.read(len(chunk)):
+                return False
+    return True
 
 
 def _asset(manifest: Manifest) -> tuple[str, str, int, Callable[[Path], IO[bytes]]]:
@@ -341,13 +414,9 @@ def _accepted(results: object, repo: str, sha256: str) -> dict | None:
     return None
 
 
-def verify_provenance(packed: Path, sha256: str, base_url: str, client: httpx.Client) -> dict:
-    """Check that `packed` (sha256 `sha256`) was built by the build-index workflow of the repository serving it.
-
-    `gh attestation verify` checks the Sigstore signature, certificate chain and transparency-log entry, and that
-    the file's digest is one of the attestation's subjects; `_accepted` then checks who signed it. Raises
-    ProvenanceError unless both pass. Returns what the metadata file records about the build.
-    """
+def _verifier(base_url: str) -> tuple[str, str]:
+    """(`owner/repo`, gh's path) for verifying an index served from `base_url`; ProvenanceError when it can't be
+    verified at all, checked before anything is downloaded."""
     repo = release_repo(base_url)
     if repo is None:
         raise ProvenanceError(
@@ -359,6 +428,17 @@ def verify_provenance(packed: Path, sha256: str, base_url: str, client: httpx.Cl
         raise ProvenanceError(
             "verifying the index needs the GitHub CLI (`gh`, https://cli.github.com) on PATH"
         )
+    return repo, gh
+
+
+def verify_provenance(packed: Path, sha256: str, base_url: str, client: httpx.Client) -> dict:
+    """Check that `packed` (sha256 `sha256`) was built by the build-index workflow of the repository serving it.
+
+    `gh attestation verify` checks the Sigstore signature, certificate chain and transparency-log entry, and that
+    the file's digest is one of the attestation's subjects; `_accepted` then checks who signed it. Raises
+    ProvenanceError unless both pass. Returns what the metadata file records about the build.
+    """
+    repo, gh = _verifier(base_url)
     args = [gh, "attestation", "verify", str(packed), "--repo", repo]
     args += ["--signer-workflow", f"{repo}/{BUILD_WORKFLOW}", "--format", "json"]
     bundle = _temp_file(packed.parent, f"{packed.name}.", ".sigstore.json")
@@ -410,7 +490,12 @@ def download(
     asset, expected_sha256, expected_size, opener = _asset(manifest)
     if expected_size > MAX_DOWNLOAD_BYTES:
         raise ValueError(f"published index is {expected_size} bytes, above the {MAX_DOWNLOAD_BYTES}-byte cap")
+    if verify:
+        _verifier(
+            base_url
+        )  # without gh, or from a server that isn't a GitHub release: refused before downloading
     dest.parent.mkdir(parents=True, exist_ok=True)
+    remove_leftovers(dest)
     # Named after the build, so it is a new file no process has open; temp names are this process's own.
     target = dest.with_name(versioned_name(dest, manifest.sha256))
     packed_tmp = _temp_file(dest.parent, f"{dest.name}.download-", Path(asset).suffix)
@@ -428,11 +513,16 @@ def download(
         if digest.hexdigest() != expected_sha256:
             raise ValueError("index checksum mismatch; refusing to install it")
         provenance = verify_provenance(packed_tmp, expected_sha256, base_url, client) if verify else None
-        with opener(packed_tmp) as packed, db_tmp.open("wb") as out:
-            shutil.copyfileobj(packed, out, 1 << 20)
+        try:
+            with opener(packed_tmp) as packed, db_tmp.open("wb") as out:
+                _copy_capped(packed, out, _expansion_cap(size))
+        except _DECOMPRESS_ERRORS as exc:
+            raise ValueError(f"the downloaded index didn't decompress ({type(exc).__name__}: {exc})") from exc
         _validate(db_tmp)
-        if not target.exists():  # else another process installed this build already
-            os.replace(db_tmp, target)
+        # A file of this build's name is replaced unless it has these very bytes (another process installed this
+        # build already): it may be damaged, or installed from other bytes without the checks this one passed.
+        if not (target.exists() and _same_bytes(target, db_tmp)):
+            _replace(db_tmp, target)
         now = _now().isoformat()
         meta = {
             "manifest": asdict(manifest),
@@ -452,11 +542,23 @@ def download(
         db_tmp.unlink(missing_ok=True)
 
 
+def _checked_at(local: dict) -> datetime | None:
+    """When the downloaded index was last checked against the published one; None when the metadata doesn't say
+    in a form that can be read (then it is checked now)."""
+    stamp = local.get("checked_at") or local.get("downloaded_at")
+    try:
+        checked = datetime.fromisoformat(stamp)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    return checked if checked.tzinfo else checked.replace(tzinfo=UTC)
+
+
 def ensure_index(
     settings: Settings, *, client: httpx.Client | None = None, now: datetime | None = None
 ) -> EnsureResult:
     """Make sure a usable index exists; refresh a *downloaded* one when it is older than the max age."""
     dest = settings.index_path
+    remove_leftovers(dest)  # an interrupted download's temp files (the refresh runs in a daemon thread)
     current = active_index(dest)  # the downloaded file the metadata names, else `dest` (DT-OSS-08)
     exists = current.exists()
     if settings.offline:
@@ -470,8 +572,11 @@ def ensure_index(
         return EnsureResult(current, False, "using a locally built index (never auto-replaced)")
     now = now or _now()
     if exists and local:
-        checked = datetime.fromisoformat(local.get("checked_at") or local["downloaded_at"])
-        if now - checked < timedelta(hours=settings.index_max_age_hours):
+        checked = _checked_at(local)
+        # A time in the future (a clock that was ahead) would read fresh for ever, so it is checked now.
+        if checked is not None and timedelta(0) <= now - checked < timedelta(
+            hours=settings.index_max_age_hours
+        ):
             return EnsureResult(current, False, "index is fresh")
     own_client = client is None
     client = client or http_client()

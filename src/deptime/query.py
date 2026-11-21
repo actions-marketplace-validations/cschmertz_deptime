@@ -1142,6 +1142,8 @@ class DepTime:
             None,
         )
         req = self.store.requirement(name, row["ordinal"], other.name) if other else None
+        # The release's Requires-Dist entry: its marker is the project's text, so it is cleaned (audit E3).
+        req_text = untrusted_text(str(req)) if req else None
         allowed = (
             [
                 r
@@ -1157,7 +1159,7 @@ class DepTime:
                 if other is None
                 else f"{other.name}, which {name} {row['version']} doesn't require"
                 if req is None
-                else f"{other.name}, with no indexed release that {name} {row['version']} allows ({req})"
+                else f"{other.name}, with no indexed release that {name} {row['version']} allows ({req_text})"
             )
             return SymbolCheck(
                 path=full,
@@ -1169,7 +1171,7 @@ class DepTime:
         result = got.results[0]
         hint = (
             f"{lead or f'{via} comes from {other.name}'}: checked as `{target}` in {other.name} {pick}, the newest"
-            f" release {name} {row['version']} allows ({req})"
+            f" release {name} {row['version']} allows ({req_text})"
         )
         return result.model_copy(
             update={"path": full, "hint": hint + (f"; {result.hint}" if result.hint else "")}
@@ -2200,9 +2202,10 @@ class DepTime:
                 if (
                     not url.lower().startswith(("https://", "http://"))
                     or len(url) > 500
-                    or any(c.isspace() or ord(c) < 32 for c in url)
+                    # anything cleaning would change (whitespace, invisible or reordering characters, an image,
+                    # instruction-like text) means it isn't the page the project named (audit E3)
+                    or untrusted_text(url, 500) != url
                     or instruction_like(label)
-                    or instruction_like(url)
                 ):
                     continue
                 return Link(title=f"{name} {untrusted_text(label)}", url=url)
