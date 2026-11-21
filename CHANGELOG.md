@@ -61,6 +61,8 @@ are data: they can grow in any release.)
 
 ## [Unreleased]
 
+## [1.1.4] - 2026-11-21
+
 ### Fixed
 - `check_symbols(code=...)` and `check-upgrade` no longer read another distribution's names in a shared namespace
   as the package's: after `import google.genai`, `google.auth.default()` was checked as
@@ -774,7 +776,8 @@ A documentation release: the code is 0.1.13's, and every answer is the same.
 - The prebuilt index of 52 packages, downloaded on first run and refreshed daily; `deptime index pull|status|pack`;
   offline mode (`DEPTIME_OFFLINE=1`).
 
-[Unreleased]: https://github.com/cschmertz/deptime/compare/v1.1.3...HEAD
+[Unreleased]: https://github.com/cschmertz/deptime/compare/v1.1.4...HEAD
+[1.1.4]: https://github.com/cschmertz/deptime/compare/v1.1.3...v1.1.4
 [1.1.3]: https://github.com/cschmertz/deptime/compare/v1.1.2...v1.1.3
 [1.1.2]: https://github.com/cschmertz/deptime/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/cschmertz/deptime/compare/v1.1.0...v1.1.1
