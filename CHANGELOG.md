@@ -61,6 +61,8 @@ are data: they can grow in any release.)
 
 ## [Unreleased]
 
+## [1.1.2] - 2026-11-21
+
 ### Added
 - Migration hints for the rest of the MCP Python SDK 2.0's removed names, from its migration guide: the
   `ClientNotificationType`, `ClientResultType` and `ServerRequestType` aliases → the bare `ClientNotification`,
@@ -737,7 +739,8 @@ A documentation release: the code is 0.1.13's, and every answer is the same.
 - The prebuilt index of 52 packages, downloaded on first run and refreshed daily; `deptime index pull|status|pack`;
   offline mode (`DEPTIME_OFFLINE=1`).
 
-[Unreleased]: https://github.com/cschmertz/deptime/compare/v1.1.1...HEAD
+[Unreleased]: https://github.com/cschmertz/deptime/compare/v1.1.2...HEAD
+[1.1.2]: https://github.com/cschmertz/deptime/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/cschmertz/deptime/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/cschmertz/deptime/compare/v1.0.3...v1.1.0
 [1.0.3]: https://github.com/cschmertz/deptime/compare/v1.0.2...v1.0.3
