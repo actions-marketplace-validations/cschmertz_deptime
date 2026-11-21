@@ -33,6 +33,9 @@ jobs:
    checks each one against the index at the new version. A use fails the check when the index shows it failing at the
    new version and not at the old one: a removed name, a keyword that's no longer accepted, an argument that's now
    required, or a call to something that only raises.
+5. An update to a release the index doesn't have yet (it is rebuilt twice a day) isn't checked: the summary says
+   "Not checked" and a warning marks it, and the step passes. Re-run the job later to check it. When the check can't
+   run at all (no index, a lockfile it can't read), the step fails, whatever `fail-on-break` says.
 
 ## What it runs, sends and fetches
 

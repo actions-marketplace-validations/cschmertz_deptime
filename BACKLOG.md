@@ -25,7 +25,7 @@ which of a project's code a dependency update breaks. Everything done before 202
   51.4 MB and the `.gz` 79.2 MB. `build-index` runs at 04:17 and 16:17 UTC, replaces the rolling `index` release and
   signs it. A build with no extraction change usually takes under 20 minutes; a `SNAPSHOT_FORMAT` bump means one cold
   build of about 3 hours (format 27's: 2 h 48 min).
-- **Checks that run without anyone:** `ci` on every push (568 offline tests), and `bench` on every code change and
+- **Checks that run without anyone:** `ci` on every push (623 offline tests), and `bench` on every code change and
   every published index. `bench` fails on a benchmark drop of more than 2 points, a traceback case that passed in the
   baseline and fails now, or a false-positive rate up by more than 1, and on the published index itself (`tests/test_golden.py`, DT-QA-03): older than 48 h, a package's newest
   release on PyPI for more than 24 h without being indexed, or a Tier A package's newest release without the names
@@ -134,6 +134,16 @@ in-sample run flags 0 of 3,291 working uses and fails no pull request without a 
 - [x] **DT-CORE-49** (2026-11-19, PR #34 by swpswpswp): `explain_error` explains an error from a function that
   only raises, when its message matches the installed release's record exactly: a `now_raises` finding with
   `raises` and `raises_since` (llama-index-core's `ServiceContext.from_defaults`).
+- [x] **DT-CORE-79** (2026-11-21): an update to a release the index doesn't have yet is listed as not checked
+  (`not_indexed`, a warning annotation, exit 0), never "No breaks found"; from an older release the check goes as
+  far as the newest indexed one (`newer_than_index`).
+- [x] **DT-CORE-80** (2026-11-21): `check-upgrade` exits 2 whenever it couldn't run: an unexpected error, no index,
+  an unreadable pin file (`pins_unread`), a version that isn't one; suppressions that aren't tables no longer stop
+  it or `deptime mcp`.
+- [x] **DT-CORE-81** (2026-11-21): files with a byte-order mark are read (Python files and pins); files over 2 MB
+  are counted as unread.
+- [x] **DT-CORE-82** (2026-11-21): `installed_as` distributions (`pydantic-ai`, `typer-slim`, ...) are checked as
+  the covered package.
 
 **Phase 4, the fix (the model's part, outside DepTime): done.** DT-QA-27 met its bar on broken updates nobody had
 seen (`bench/agent-fix/qa27/results-2026-11-17.md`). Held from it: DepTime doesn't check a pydantic model's required

@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from packaging.utils import canonicalize_name
+from packaging.version import InvalidVersion, Version
 
 from deptime import snippet
 from deptime.models import (
@@ -97,13 +98,15 @@ def project_files(root: Path) -> list[str]:
 
 
 def read_code(root: Path, files: Iterable[str]) -> dict[str, str]:
+    """Each file's text, without a byte-order mark (DT-CORE-81). A file over MAX_FILE_BYTES, or one that can't be
+    opened, is left out: pass the files that aren't in the result to `check_upgrade(unread=)` to count them."""
     code = {}
     for rel in files:
         path = root / rel
         try:
             if path.stat().st_size > MAX_FILE_BYTES:
                 continue
-            code[rel] = path.read_text(encoding="utf-8", errors="replace")
+            code[rel] = path.read_text(encoding="utf-8-sig", errors="replace")
         except OSError:
             continue
     return code
@@ -211,27 +214,101 @@ def _explain(kind: str, kwarg: str | None, r: SymbolCheck, at: str) -> str:
     return f"`{r.path}` {r.hint}." if r.hint else f"`{r.path}` takes fewer arguments by position at {at}."
 
 
+def _version(raw: str) -> Version | None:
+    try:
+        return Version(raw)
+    except InvalidVersion:
+        return None
+
+
+def _alias(dt, name: str, change: DependencyChange):
+    """The covered package whose code `name` installs with the same version numbers (`installed_as`: pydantic-ai is
+    pydantic-ai-slim's code, DT-CORE-82), when both versions are in the range it names; else None."""
+    spec = dt.coverage.installed_under(name)
+    if spec is None:
+        return None
+    for req in spec.installed_as:
+        if canonicalize_name(req.name) == name and all(
+            req.specifier.contains(v, prereleases=True) for v in (change.from_version, change.to_version)
+        ):
+            return spec
+    return None
+
+
+def _not_indexed(dt, name: str, change: DependencyChange) -> str | None:
+    """Why the index can't compare this update (DT-CORE-79), or None when it can. Answering for the nearest indexed
+    release is how a release the policy leaves out is read, but when that is the old version's own release, the
+    check would compare a release with itself and report "No breaks found" for an update nobody checked."""
+    rows = dt.store.releases(name)
+    to_row, to_exact = dt.store.resolve_version(name, change.to_version)
+    if to_row is None:
+        return (
+            f"{name} {change.to_version} is older than the earliest indexed release, {rows[0]['version']}, so the"
+            " update wasn't checked."
+        )
+    from_row, _ = dt.store.resolve_version(name, change.from_version)
+    same = Version(change.from_version) == Version(change.to_version)
+    if same or from_row is None or from_row["version"] != to_row["version"]:
+        return None
+    newest = rows[-1]["version"]
+    if not to_exact and Version(change.to_version) > Version(newest):
+        return (
+            f"{name} {change.to_version} isn't in DepTime's index yet: the newest release there is {newest}, and the"
+            " index is rebuilt twice a day, so run the check again later."
+        )
+    gone = change.from_version if to_exact else change.to_version
+    return (
+        f"{name} {gone} isn't indexed, and {change.from_version} and {change.to_version} are both answered for"
+        f" {to_row['version']}, the nearest indexed release, so there was nothing to compare."
+    )
+
+
+def _partial(name: str, to: str, newest: str) -> str:
+    return (
+        f"So the check of {name} went as far as {newest}: a break {to} brings isn't seen until the index has it (it is"
+        " rebuilt twice a day)."
+    )
+
+
 def check_upgrade(
     dt,  # deptime.query.DepTime
     project: str,
     code: dict[str, str],
     changes: list[DependencyChange],
     base: str | None = None,
+    unread: Iterable[str] = (),
+    pins_unread: Iterable[str] = (),
 ) -> UpgradeCheckResult:
-    """Check each change against the project's code (`code`: relative path -> source)."""
-    result = UpgradeCheckResult(project=project, base=base)
-    own = own_modules(code)
+    """Check each change against the project's code (`code`: relative path -> source). `unread`: the project's Python
+    files `read_code` left out (too large, or not opened), counted in `files_unreadable` (DT-CORE-81). `pins_unread`:
+    the pin files that couldn't be read, with the reason (DT-CORE-80)."""
+    result = UpgradeCheckResult(project=project, base=base, pins_unread=list(pins_unread))
+    unread = set(unread) - set(code)
+    own = own_modules([*code, *unread])
     unreadable: set[str] = set()
     suppressed = 0
+    changed = {canonicalize_name(c.package) for c in changes}
     for change in changes:
         name = canonicalize_name(change.package)
         if change.from_version is None or change.to_version is None:
             result.skipped.append(change)
             continue
-        if dt.coverage.get(name) is None or not dt._indexed(name):
+        bad = next((v for v in (change.from_version, change.to_version) if _version(v) is None), None)
+        if bad is not None:
+            note = f"`{bad}` isn't a version, so there is no update to check."
+            result.skipped.append(change.model_copy(update={"note": note}))
+            continue
+        spec, alias = dt.coverage.get(name), None
+        if spec is None and (spec := _alias(dt, name, change)) is not None:
+            if spec.name in changed:
+                continue  # the same code, changing with it: checked under its own name
+            alias = f"{name} {change.to_version} is read as {spec.name} {change.to_version}: {name} installs the same code."
+        if spec is None or not dt._indexed(spec.name):
             result.not_covered.append(change)
             continue
-        spec = dt._spec(name)
+        if (why := _not_indexed(dt, spec.name, change)) is not None:
+            result.not_indexed.append(change.model_copy(update={"note": why}))
+            continue
         roots = tuple(r for r in spec.import_names if r.split(".")[0] not in own)
         if not roots:
             result.checked.append(
@@ -242,7 +319,7 @@ def check_upgrade(
                     uses=0,
                     files=0,
                     note=f"The project defines its own `{spec.import_names[0].split('.')[0]}` module, so its imports"
-                    f" of that name are its own code and nothing of {name} was read.",
+                    f" of that name are its own code and nothing of {spec.name} was read.",
                 )
             )
             continue
@@ -253,18 +330,24 @@ def check_upgrade(
                 unreadable.add(rel)
                 continue
             read.merge(rel, found)
-        upgrade, hidden = _check_package(dt, spec, change, read)
+        upgrade, hidden = _check_package(dt, spec, change, read, alias)
         suppressed += hidden
         result.checked.append(upgrade)
     result.breaks = sum(len(p.breaks) for p in result.checked)
     result.files_read = len(code) - len(unreadable)
-    result.files_unreadable = sorted(unreadable)[:MAX_UNREADABLE_LISTED]
+    result.files_unreadable = sorted(unreadable | unread)[:MAX_UNREADABLE_LISTED]
     result.suppressed = suppressed
     notes = []
     if unreadable:
+        one = len(unreadable) == 1
         notes.append(
-            f"{len(unreadable)} Python file{'' if len(unreadable) == 1 else 's'} didn't parse, so nothing was read"
-            " from them."
+            f"{len(unreadable)} Python file{'' if one else 's'} didn't parse, or {'nests' if one else 'nest'} too"
+            f" deeply to read, so nothing was read from {'it' if one else 'them'}."
+        )
+    if unread:
+        notes.append(
+            f"{len(unread)} Python file{' was' if len(unread) == 1 else 's were'}n't read: over"
+            f" {MAX_FILE_BYTES:,} bytes, or couldn't be opened."
         )
     if suppressed:
         notes.append(
@@ -279,17 +362,26 @@ def _results(dt, name: str, spec, version: str, queries: list[SymbolQuery]) -> C
     return dt._check_symbols(name, spec, version, queries)
 
 
-def _check_package(dt, spec, change: DependencyChange, read: _Read) -> tuple[PackageUpgrade, int]:
+def _check_package(
+    dt, spec, change: DependencyChange, read: _Read, alias: str | None = None
+) -> tuple[PackageUpgrade, int]:
     name, to, before = spec.name, change.to_version, change.from_version
     queries, count = dt._code_queries(name, to, [], read.uses)
     at_to = _results(dt, name, spec, to, queries)
+    newest = dt.store.releases(name)[-1]["version"]
+    newer = to is not None and (v := _version(to)) is not None and v > Version(newest)
+    notes = [alias, at_to.note]
+    if newer:
+        # DT-CORE-79: the breaks up to the newest indexed release are real; the rest of the way isn't checked yet.
+        notes.append(_partial(name, to, newest))
     upgrade = PackageUpgrade(
         change=change,
         resolved_version=at_to.resolved_version,
         exact=at_to.exact,
         uses=count,
         files=len(read.files),
-        note=at_to.note,
+        note=" ".join(n for n in notes if n) or None,
+        newer_than_index=newer,
     )
     if at_to.resolved_version is None or not queries:
         return upgrade, 0
@@ -338,7 +430,7 @@ def _check_package(dt, spec, change: DependencyChange, read: _Read) -> tuple[Pac
             finding = _finding(dt, spec, kind, kwarg, r, row, exact, to)
             issue = finding.issue if finding else kind
             symbol = finding.symbol if finding else r.path
-            if any(s.matches(name, symbol, issue) for s in dt.suppressions):
+            if any(s.matches(pkg, symbol, issue) for s in dt.suppressions for pkg in {name, change.package}):
                 hidden += 1
                 continue
             upgrade.breaks.append(
@@ -354,7 +446,11 @@ def _check_package(dt, spec, change: DependencyChange, read: _Read) -> tuple[Pac
                 )
             )
         if not flags and r.deprecated:
-            if any(s.matches(name, r.path, "deprecated") for s in dt.suppressions):
+            if any(
+                s.matches(pkg, r.path, "deprecated")
+                for s in dt.suppressions
+                for pkg in {name, change.package}
+            ):
                 hidden += 1
                 continue
             since, _ = dt._deprecation(name, r.path)
@@ -554,19 +650,44 @@ def _handoff(result: UpgradeCheckResult) -> list[str]:
     ]
 
 
-def to_markdown(result: UpgradeCheckResult) -> str:
-    lines = ["## DepTime upgrade check", ""]
+def _update(c: DependencyChange) -> str:
+    return _md(f"{c.package} {c.from_version} → {c.to_version}")
+
+
+def _headline(result: UpgradeCheckResult) -> list[str]:
+    """The verdict, then each update that wasn't checked and why (DT-CORE-79, DT-CORE-80): "No breaks found" only
+    ever names updates that were checked."""
     n = result.breaks
     checked = ", ".join(
-        f"{p.change.package} {p.change.from_version} → {p.change.to_version}" for p in result.checked
+        _update(p.change) + (f" (checked up to {_md(p.resolved_version)})" if p.newer_than_index else "")
+        for p in result.checked
     )
-    if not result.checked:
-        lines.append("No covered package's version changed, so nothing was checked.")
-    elif n:
-        lines.append(f"**{n} break{'' if n == 1 else 's'} found** in this project's code: {checked}.")
-    else:
-        lines.append(f"**No breaks found** in this project's code: {checked}.")
-    lines.append("")
+    lines = []
+    if n:
+        lines += [f"**{n} break{'' if n == 1 else 's'} found** in this project's code: {checked}.", ""]
+    elif result.checked:
+        lines += [f"**No breaks found** in this project's code: {checked}.", ""]
+    for c in result.not_indexed:
+        lines += [f"**Not checked:** {_update(c)}. {_md(c.note)}", ""]
+    if result.pins_unread:
+        files = "; ".join(
+            f"{_code(where)} ({_md(why)})"
+            for where, _, why in (x.partition(": ") for x in result.pins_unread)
+        )
+        lines += [
+            f"**Not read:** {files}. The updates in {'it' if len(result.pins_unread) == 1 else 'them'}"
+            " weren't checked.",
+            "",
+        ]
+    if not lines and any(c.note for c in result.skipped):
+        lines += ["**Nothing was checked.**", ""]  # a version that isn't one: the line below says which
+    elif not lines:
+        lines += ["No covered package's version changed, so nothing was checked.", ""]
+    return lines
+
+
+def to_markdown(result: UpgradeCheckResult) -> str:
+    lines = ["## DepTime upgrade check", "", *_headline(result)]
     for p in result.checked:
         c = p.change
         head = f"### {c.package} {c.from_version} → {c.to_version}"
@@ -576,7 +697,9 @@ def to_markdown(result: UpgradeCheckResult) -> str:
         ]
         if c.source:
             facts.append(f"read from {_code(c.source)}")
-        if p.resolved_version and not p.exact:
+        if p.newer_than_index:
+            facts.append(f"checked up to {p.resolved_version}, the newest indexed release")
+        elif p.resolved_version and not p.exact:
             facts.append(f"answered for {p.resolved_version}, the nearest indexed release")
         lines += ["; ".join(facts) + ".", ""]
         if p.breaks:
@@ -632,6 +755,16 @@ def to_markdown(result: UpgradeCheckResult) -> str:
     if result.not_covered:
         names = ", ".join(f"{c.package} {c.from_version} → {c.to_version}" for c in result.not_covered)
         lines += [f"Not covered by DepTime's index, so not checked: {_md(names)}.", ""]
+    if result.skipped:
+        names = ", ".join(
+            f"{_md(c.package)} {_md(c.to_version)} (added)"
+            if c.from_version is None
+            else f"{_md(c.package)} {_md(c.from_version)} (removed)"
+            if c.to_version is None
+            else f"{_update(c)} ({_md(c.note)})"
+            for c in result.skipped
+        )
+        lines += [f"No update to check: {names}.", ""]
     if result.note:
         lines += [_md(result.note), ""]
     lines += _handoff(result)
@@ -649,7 +782,10 @@ def _escape(text: str, prop: bool = False) -> str:
     return out.replace(":", "%3A").replace(",", "%2C") if prop else out
 
 
-def _annotation(level: str, loc: UseLocation, prefix: str, title: str, message: str) -> str:
+def _annotation(level: str, loc: UseLocation | None, prefix: str, title: str, message: str) -> str:
+    """A workflow command; with no `loc`, it is about the whole update, not a line."""
+    if loc is None:
+        return f"::{level} title={_escape(title, True)}::{_escape(message)}"
     file = f"{prefix}/{loc.file}" if prefix else loc.file
     return f"::{level} file={_escape(file, True)},line={loc.line},title={_escape(title, True)}::{_escape(message)}"
 
@@ -657,10 +793,25 @@ def _annotation(level: str, loc: UseLocation, prefix: str, title: str, message: 
 def to_annotations(result: UpgradeCheckResult, prefix: str = "") -> str:
     """GitHub Actions workflow commands (DT-GTM-06): an error on each line a break reaches, a warning on each line a
     newly deprecated name is used. `prefix` is the project's directory relative to the repository's root."""
-    lines = []
+    lines = [
+        _annotation(
+            "warning",
+            None,
+            prefix,
+            f"DepTime: {c.package} {c.from_version} → {c.to_version} wasn't checked",
+            c.note or "",
+        )
+        for c in result.not_indexed
+    ]
     for p in result.checked:
         c = p.change
         at = p.resolved_version or c.to_version or ""
+        if p.newer_than_index:  # DT-CORE-79
+            title = f"DepTime: {c.package} {c.from_version} → {c.to_version} was checked up to {p.resolved_version}"
+            message = f"{c.to_version} isn't in DepTime's index yet. " + _partial(
+                c.package, c.to_version or "", p.resolved_version or ""
+            )
+            lines.append(_annotation("warning", None, prefix, title, message))
         for b in p.breaks:
             title = f"DepTime: {c.package} {c.from_version} → {c.to_version} breaks {b.path}"
             message = _break_line(b, at).removeprefix("- ").split(" At `", 1)[0].replace("`", "")

@@ -41,15 +41,29 @@ class Suppression:
         return path == self.path or bare == self.path or bare.startswith(self.path + ".")
 
 
+def _table(data: dict, key: str, where: str) -> dict:
+    value = data.get(key, {})
+    if not isinstance(value, dict):
+        raise ValueError(f"{where} is a {type(value).__name__}, not a table")
+    return value
+
+
 def _entries(project: Path) -> tuple[list[object], Path | None]:
+    """The `suppress` entries, and the file they came from. Raises OSError or ValueError (a TOML or UTF-8 error, or a
+    key that isn't a table), never AttributeError: `deptime mcp` loads this at start-up (DT-CORE-80)."""
     own = project / "deptime.toml"
     if own.is_file():
-        return tomllib.loads(own.read_text(encoding="utf-8")).get("suppress", []), own
-    pyproject = project / "pyproject.toml"
-    if pyproject.is_file():
-        data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
-        return data.get("tool", {}).get("deptime", {}).get("suppress", []), pyproject
-    return [], None
+        data, source = tomllib.loads(own.read_text(encoding="utf-8-sig")), own
+    else:
+        pyproject = project / "pyproject.toml"
+        if not pyproject.is_file():
+            return [], None
+        data = tomllib.loads(pyproject.read_text(encoding="utf-8-sig"))
+        data, source = _table(_table(data, "tool", "[tool]"), "deptime", "[tool.deptime]"), pyproject
+    entries = data.get("suppress", [])
+    if not isinstance(entries, list):
+        raise ValueError(f"`suppress` in {source.name} is a {type(entries).__name__}, not a list of tables")
+    return entries, source
 
 
 def load(project: Path | None = None) -> tuple[Suppression, ...]:
@@ -58,11 +72,11 @@ def load(project: Path | None = None) -> tuple[Suppression, ...]:
     root = project or Path(os.environ.get("DEPTIME_PROJECT_DIR", "").strip() or Path.cwd())
     try:
         entries, source = _entries(root)
-    except (OSError, tomllib.TOMLDecodeError) as exc:
+    except (OSError, ValueError) as exc:  # TOMLDecodeError and UnicodeDecodeError are ValueErrors
         print(f"deptime: suppressions not read: {type(exc).__name__}: {exc}", file=sys.stderr)
         return ()
     out = []
-    for i, entry in enumerate(entries if isinstance(entries, list) else []):
+    for i, entry in enumerate(entries):
         fields = entry if isinstance(entry, dict) else {}
         package = fields.get("package")
         values = [fields.get(k) for k in ("path", "kind", "reason")]

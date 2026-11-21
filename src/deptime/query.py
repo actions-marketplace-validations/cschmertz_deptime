@@ -878,7 +878,7 @@ class DepTime:
         if code is not None:
             uses = snippet.uses_in(code, tuple(spec.import_names))
             if uses is None:
-                read = "The code doesn't parse as Python, so nothing was read from it."
+                read = "The code doesn't parse as Python, or nests too deeply to read, so nothing was read from it."
             else:
                 queries, count = self._code_queries(name, version, queries, uses)
                 read = f"{count} name{'' if count == 1 else 's'} of {name} read from the code."

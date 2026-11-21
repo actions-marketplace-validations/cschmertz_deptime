@@ -168,12 +168,14 @@ class _Reader(ast.NodeVisitor):
 
 
 def uses_in(code: str, roots: tuple[str, ...], limit: int | None = MAX_CODE_CHARS) -> Uses | None:
-    """What `code` uses from the package whose import names are `roots`; None when it doesn't parse. `limit` caps the
-    characters read (None: all of it, for a project's own files)."""
+    """What `code` uses from the package whose import names are `roots`; None when it doesn't parse, or nests deeper
+    than Python lets the reader follow (a few hundred terms of `'a' + 'a' + ...`, DT-CORE-80). `limit` caps the
+    characters read (None: all of it, for a project's own files). A leading byte-order mark is no code (DT-CORE-81)."""
+    code = code.removeprefix("\ufeff")
     try:
         tree = ast.parse(code if limit is None else code[:limit])
-    except (SyntaxError, ValueError):
+        reader = _Reader(roots)
+        reader.visit(tree)
+    except (SyntaxError, ValueError, RecursionError):
         return None
-    reader = _Reader(roots)
-    reader.visit(tree)
     return reader.uses

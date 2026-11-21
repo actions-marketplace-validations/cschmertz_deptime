@@ -62,6 +62,14 @@ are data: they can grow in any release.)
 ## [Unreleased]
 
 ### Added
+- The upgrade check says when it didn't check an update because the index doesn't have the new release yet, instead
+  of passing it with "No breaks found": a Dependabot pull request opened before the twice-daily build compared the
+  old release with itself. The update is listed in a new `not_indexed` field with the reason in its `note` (a new
+  field of each change), the report says "Not checked", `--annotations` adds a warning, and the exit code stays 0.
+  From an older release, the check goes as far as the newest indexed one, keeps the breaks it finds there, and the
+  new `newer_than_index` field and the report say how far it got (DT-CORE-79).
+- `pins_unread` lists the pin files `check-upgrade` couldn't read, with the reason, and the report shows them; they
+  were only printed to stderr (DT-CORE-80).
 - `diff_versions` says which used names it can't check, and why, in a new `unchecked_uses` field, and its note
   points to it, instead of an empty answer that reads as "nothing changed" (DT-CORE-61).
 - `diff_versions` lists `deprecated_uses` when given `used_symbols`: every used path that is deprecated at
@@ -124,6 +132,21 @@ are data: they can grow in any release.)
   the message the old class now raises (DT-CORE-77).
 
 ### Fixed
+- `check-upgrade` keeps its exit-code promise: 2 when the check couldn't run, never 1 (a confirmed break) or 0. An
+  unexpected error exited 1 with a traceback, so the Action failed a pull request as broken; with no index (a failed
+  download, or offline with none) every package read "not covered" and it exited 0; a pin file it couldn't read (a
+  lockfile with merge-conflict markers) left its updates unchecked and exited 0, or 1 when a break was found
+  elsewhere. A `pyproject.toml` with `[tool] deptime = "off"` stopped `check-upgrade`, and `deptime mcp` at
+  start-up: the suppressions are now reported as not read. A file nesting deeper than the reader can follow (a few
+  hundred terms of `'a' + 'a' + ...`) counts as unreadable instead of crashing the check or the tools. A version that
+  isn't one (`--from latest`, `from_version=">=0.27"`) is refused rather than read as older than the index, which
+  made a use failing at both versions a break (DT-CORE-80).
+- Files that start with a byte-order mark, as some Windows editors save them, are read: such a Python file was
+  skipped with its breaks, and such a `requirements.txt` lost its first pin. Python files over 2 MB, which were left
+  out without a word, are counted in `files_unreadable` and the note (DT-CORE-81).
+- An update of a distribution that installs a covered package's code under another name (`pydantic-ai`,
+  `fastmcp-slim`, `typer-slim`, `pinecone-client` before 6) is checked as that package instead of reading "not
+  covered"; a project's suppressions may name either (DT-CORE-82).
 - `explain_error` explains a private method missing from the project's own subclass when another class of the
   library still has it, if the traceback ran through the module of the one class that lost it: CogVLM2's
   `_extract_past_from_model_output` error at transformers 4.52.4 now names `GenerationMixin`, which lost it after
