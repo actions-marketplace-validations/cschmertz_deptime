@@ -1,3 +1,5 @@
+import asyncio
+import json
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -6,11 +8,14 @@ from mcp import Client
 from starlette.testclient import TestClient
 
 from deptime import cli
+from deptime.query import DepTime
 from deptime.server.http_app import create_app
 from deptime.server.mcp_app import build_mcp
 from deptime.server.metering import InMemoryQuotaStore, MeteringMiddleware, identify
 from deptime.tracebacks import MAX_INPUT_CHARS
 from tests.test_tracebacks import HTTPX_TB
+
+LOCAL = "http://127.0.0.1:8000"  # what a local client sends as Host; the test settings serve loopback
 
 
 @pytest.mark.anyio
@@ -96,7 +101,7 @@ async def test_metering_blocks_after_anonymous_limit(settings):
 
 
 def test_http_health_and_rest(settings):
-    with TestClient(create_app(settings)) as http:
+    with TestClient(create_app(settings), base_url=LOCAL) as http:
         health = http.get("/healthz").json()
         assert health["ok"] and health["index_loaded"]
         body = http.post(
@@ -108,7 +113,7 @@ def test_http_health_and_rest(settings):
 
 
 def test_rest_check_upgrade(settings):
-    with TestClient(create_app(settings)) as http:
+    with TestClient(create_app(settings), base_url=LOCAL) as http:
         up = http.post(
             "/v1/check-upgrade",
             json={
@@ -208,7 +213,7 @@ def test_rest_rejects_a_malformed_body_with_400(settings):
         ("check-upgrade", {"package": "httpx", "from_version": "0.27.2", "files": {"a.py": 1}}),
         ("symbol-history", {"package": ["httpx"], "path": "httpx.Client"}),
     ]
-    with TestClient(create_app(replace(settings, anon_daily_limit=100))) as http:
+    with TestClient(create_app(replace(settings, anon_daily_limit=100)), base_url=LOCAL) as http:
         for tool, body in bad:
             r = http.post(f"/v1/{tool}", json=body)
             assert r.status_code == 400 and r.json()["error"] == "bad_request", (tool, body, r.text)
@@ -229,3 +234,67 @@ def test_rest_rejects_a_malformed_body_with_400(settings):
             json={"package": "httpx", "version": "0.28.1", "symbols": [{"path": "httpx.Client"}]},
         )
         assert r.status_code == 200 and r.json()["results"][0]["status"] == "present"
+
+
+def test_rest_and_health_refuse_other_sites_when_served_on_loopback(settings):
+    """D4: /mcp checked Host and Origin on loopback, but /v1 and /healthz didn't, and /v1 read any content type as
+    JSON, so a web page could POST to a developer's local server without a CORS preflight (text/plain), or reach it
+    through a rebound host name."""
+    tb = {"traceback": HTTPX_TB}
+    with TestClient(create_app(settings), base_url=LOCAL) as http:
+        r = http.get("/healthz", headers={"Host": "rebind.example.com"})
+        assert r.status_code == 421 and r.json()["error"] == "forbidden"
+        r = http.post("/v1/explain-error", json=tb, headers={"Origin": "https://evil.example"})
+        assert r.status_code == 403 and r.json()["error"] == "forbidden"
+        assert http.get("/v1/coverage", headers={"Host": "rebind.example.com:8000"}).status_code == 421
+        assert http.post("/v1/explain-error", json=tb, headers={"Origin": LOCAL}).status_code == 200
+        assert http.get("/healthz", headers={"Host": "localhost:8000"}).status_code == 200
+        # A body that isn't sent as JSON: what a page can send without a preflight
+        r = http.post("/v1/explain-error", content=json.dumps(tb), headers={"Content-Type": "text/plain"})
+        assert r.status_code == 415 and r.json()["error"] == "unsupported_media_type"
+        assert http.post("/v1/explain-error", content=json.dumps(tb)).status_code == 415  # no content type
+        r = http.post(
+            "/v1/explain-error", content=json.dumps(tb), headers={"Content-Type": "application/json"}
+        )
+        assert r.status_code == 200
+    # Served on every interface (a public instance behind its own host name), there is no host rule to apply
+    with TestClient(create_app(replace(settings, host="0.0.0.0"))) as http:
+        assert http.get("/healthz", headers={"Host": "deptime.example.com"}).status_code == 200
+        assert http.get("/v1/coverage", headers={"Origin": "https://deptime.example.com"}).status_code == 200
+        r = http.post("/v1/explain-error", content=json.dumps(tb), headers={"Content-Type": "text/plain"})
+        assert r.status_code == 415  # the content type is checked everywhere
+
+
+def test_rest_caps_the_body_and_runs_the_tool_off_the_event_loop(settings, monkeypatch):
+    """D1: /v1 read a body of any size (20 MB to /v1/coverage got 200 where /mcp gives 413), and ran the tool on the
+    event loop, so one slow call stalled every other request, /healthz included."""
+    from mcp.server.transport_security import DEFAULT_MAX_REQUEST_BODY_SIZE as cap
+
+    big = json.dumps({"traceback": "x" * cap})
+    on_loop: list[bool] = []
+
+    def report(self):
+        try:
+            asyncio.get_running_loop()
+            on_loop.append(True)
+        except RuntimeError:
+            on_loop.append(False)
+        return real(self)
+
+    real = DepTime.coverage_report
+    monkeypatch.setattr(DepTime, "coverage_report", report)
+    with TestClient(create_app(replace(settings, anon_daily_limit=100)), base_url=LOCAL) as http:
+        r = http.post("/v1/explain-error", content=big, headers={"Content-Type": "application/json"})
+        assert r.status_code == 413 and r.json()["error"] == "too_large"
+
+        def chunks():  # no Content-Length: the cap holds while the body is read
+            for _ in range(5):
+                yield b" " * (cap // 4)
+
+        r = http.post("/v1/coverage", content=chunks(), headers={"Content-Type": "application/json"})
+        assert r.status_code == 413
+        assert http.post("/v1/coverage", json={}).status_code == 200
+        assert http.get("/v1/coverage").status_code == 200
+        r = http.post("/v1/coverage", content="[" * 100_000, headers={"Content-Type": "application/json"})
+        assert r.status_code == 400 and r.json()["error"] == "invalid_json"  # nested past the decoder's depth
+    assert on_loop == [False, False]

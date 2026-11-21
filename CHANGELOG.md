@@ -61,6 +61,22 @@ are data: they can grow in any release.)
 
 ## [Unreleased]
 
+### Fixed
+- `check_symbols(code=...)` and `check-upgrade` no longer read another distribution's names in a shared namespace
+  as the package's: after `import google.genai`, `google.auth.default()` was checked as
+  `google.genai.google.auth.default` and reported missing. The same held for `llama_index.*` beside
+  `llama_index.core`, and `_pytest.*` beside `_pytest.hookspec` (DT-CORE-85).
+- A traceback with a long chain of exceptions is parsed in time linear in its length again; one that prints no
+  traceback of its own no longer takes the frames of the exception before it (DT-CORE-86).
+
+### Changed
+- `deptime serve`'s JSON API takes a POST body only as `Content-Type: application/json` (415 otherwise) and of up
+  to 4 MiB (413), the same cap as `/mcp`, and runs each tool call in a worker thread, as `/mcp` does (DT-HOST-07).
+
+### Security
+- On a loopback host, `deptime serve`'s `/v1/*` and `/healthz` check Host and Origin the way `/mcp` already did, so
+  a web page in the developer's browser can't call the local server (DT-HOST-07).
+
 ## [1.1.3] - 2026-11-21
 
 ### Fixed

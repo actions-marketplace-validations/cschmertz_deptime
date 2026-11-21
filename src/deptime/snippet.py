@@ -66,6 +66,12 @@ def _within(path: str, roots: tuple[str, ...]) -> bool:
     return any(path == r or path.startswith(r + ".") for r in roots)
 
 
+def _toward(path: str, roots: tuple[str, ...]) -> bool:
+    """Whether `path` is the package's or a namespace on the way to it: `import google.genai` binds `google`, which
+    leads to google-genai, but `google.auth` is another distribution's (DT-CORE-85)."""
+    return _within(path, roots) or any(r.startswith(path + ".") for r in roots)
+
+
 class _Reader(ast.NodeVisitor):
     def __init__(self, roots: tuple[str, ...]) -> None:
         self.roots = roots
@@ -102,20 +108,27 @@ class _Reader(ast.NodeVisitor):
             self.bound[a.asname or a.name] = path
 
     def _path(self, node: ast.expr) -> str | None:
-        """The package path an expression names: a bound name, or an attribute chain off one."""
+        """The path an expression names: a bound name, or an attribute chain off one, while it stays toward the
+        package (`google`, `google.genai.Client`; not `google.auth`)."""
         if isinstance(node, ast.Name):
             return self.bound.get(node.id)
         if isinstance(node, ast.Attribute):
             base = self._path(node.value)
-            return f"{base}.{node.attr}" if base else None
+            path = f"{base}.{node.attr}" if base else None
+            return path if path and _toward(path, self.roots) else None
         return None
+
+    def _own(self, node: ast.expr) -> str | None:
+        """The package path an expression names; None for a namespace it shares (`google` alone)."""
+        path = self._path(node)
+        return path if path and _within(path, self.roots) else None
 
     def _built_by(self, node: ast.expr) -> str | None:
         """The package path called to build the object an expression names: `client` or `httpx.Client()`."""
         if isinstance(node, ast.Name):
             return self.built.get(node.id)
         if isinstance(node, ast.Call):
-            return self._path(node.func)
+            return self._own(node.func)
         return None
 
     @staticmethod
@@ -124,7 +137,7 @@ class _Reader(ast.NodeVisitor):
 
     def visit_Assign(self, node: ast.Assign) -> None:
         self.generic_visit(node)
-        built = self._path(node.value.func) if isinstance(node.value, ast.Call) else None
+        built = self._own(node.value.func) if isinstance(node.value, ast.Call) else None
         for target in node.targets:
             if isinstance(target, ast.Name):
                 self.bound.pop(target.id, None)
@@ -139,7 +152,7 @@ class _Reader(ast.NodeVisitor):
             if (
                 isinstance(item.optional_vars, ast.Name)
                 and isinstance(item.context_expr, ast.Call)
-                and (built := self._path(item.context_expr.func)) is not None
+                and (built := self._own(item.context_expr.func)) is not None
             ):
                 self.built[item.optional_vars.id] = built
         self.generic_visit(node)
@@ -147,7 +160,7 @@ class _Reader(ast.NodeVisitor):
     visit_AsyncWith = visit_With
 
     def visit_Call(self, node: ast.Call) -> None:
-        path = self._path(node.func)
+        path = self._own(node.func)
         if path is not None:
             self.uses.add(path, self._kwargs(node), node.lineno)
             self.uses.called(path, node)
@@ -158,7 +171,7 @@ class _Reader(ast.NodeVisitor):
 
     def visit_Attribute(self, node: ast.Attribute) -> None:
         if isinstance(node.ctx, ast.Load):
-            path = self._path(node)
+            path = self._own(node)
             if path is not None:
                 self.uses.add(path, line=node.lineno)
                 return  # its parts are part of the path

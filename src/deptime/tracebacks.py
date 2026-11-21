@@ -418,9 +418,12 @@ def _signal_in_chain(lines: list[str], found: list[tuple[int, str, str]]) -> Err
 
 def _signal_at(lines: list[str], exc_index: int, exc_type: str, exc_msg: str) -> ErrorSignal:
     """The signal for the exception printed at `lines[exc_index]`, with the frames of its own traceback block."""
+    # The block starts at its header, or at the chain marker before it when it has none (an exception that was never
+    # raised prints no traceback): the frames before a marker are another exception's, and looking back past one
+    # made a long chain quadratic (DT-CORE-86).
     start = 0
     for i in range(exc_index, -1, -1):
-        if lines[i].strip() == TRACEBACK_HEADER:
+        if (stripped := lines[i].strip()) == TRACEBACK_HEADER or stripped in CHAIN_MARKERS:
             start = i
             break
     frames: list[Frame] = []

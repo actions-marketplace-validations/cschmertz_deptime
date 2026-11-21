@@ -817,6 +817,9 @@ def test_adversarial_input_parses_in_linear_time():
         "a long continued message": "ImportError: cannot import name 'x' from\n" + "a." * (n // 2),
         "a long import_string module": 'ImportError: Module "' + "a." * (n // 2) + '" does not define a',
         "a long arrow line": "File a.py:1\n---> 1 " + "import a" + ", b" * (n // 3) + "\nValueError: v",
+        # DT-CORE-86: each exception of a chain looked for its block's start back to the first line (0.38 s)
+        "a long chain after blank lines": "\n" * (n // 2)
+        + "ValueError: v\nDuring handling of the above exception, another exception occurred:\n" * (n // 160),
     }
     for name, text in inputs.items():
         best = float("inf")
@@ -825,6 +828,19 @@ def test_adversarial_input_parses_in_linear_time():
             parse_traceback(text)
             best = min(best, time.perf_counter() - start)
         assert best < 0.25, name
+
+
+def test_a_chained_exception_without_a_traceback_takes_no_frames_from_the_block_before():
+    # DT-CORE-86: an exception that was never raised prints no traceback of its own; its block starts at the marker.
+    s = parse_traceback(
+        "Traceback (most recent call last):\n"
+        '  File "/app/main.py", line 3, in <module>\n'
+        "    load()\n"
+        "KeyError: 'x'\n\n"
+        "The above exception was the direct cause of the following exception:\n\n"
+        "AttributeError: module 'httpx' has no attribute 'OldThing'\n"
+    )
+    assert (s.kind, s.module, s.name, s.frames) == ("module_attribute", "httpx", "OldThing", [])
 
 
 # DT-CORE-63: four errors as a web page shows them, from the 2026-11f holdout's misses.
