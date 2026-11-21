@@ -4,17 +4,19 @@ import ast
 import hashlib
 import io
 import sys
+import tarfile
 import weakref
 import zipfile
 from datetime import UTC, date, datetime
 from importlib import resources
 
 import httpx
+import pytest
 
 from deptime import cli
 from deptime.config import Coverage, PackageSpec, ServedRule, VersionPolicy
 from deptime.index.store import IndexStore
-from deptime.ingest import pipeline
+from deptime.ingest import pipeline, pypi
 from deptime.ingest.pipeline import IngestReport, coverage_summary, ingest_package, snapshot_path
 from deptime.ingest.snapshot import ApiSnapshot, LazySnapshot, SymbolRecord
 from deptime.models import SymbolQuery
@@ -124,7 +126,7 @@ def test_total_failure_keeps_existing_index(tmp_path):
     assert [r["version"] for r in store.releases("fakepkg")] == ["1.0.0", "2.0.0"]
 
 
-def test_pypi_outage_rebuilds_from_cached_snapshots(tmp_path):
+def test_pypi_outage_rebuilds_from_cached_snapshots(tmp_path, no_retry_wait):
     """CI builds a fresh index each night; an outage must not drop a package from what gets published."""
     with _client() as client:
         ingest_package(
@@ -812,3 +814,153 @@ def test_the_summary_says_which_releases_are_past_the_freshness_bound():
         uploaded={"0.1": "2024-01-01T00:00:00+00:00", "2.0": "2026-10-01T00:00:00+00:00"},
     )
     assert "Every selected release uploaded more than 24 h" in coverage_summary([fresh, old], now=now)
+
+
+def _pypi_down(request: httpx.Request) -> httpx.Response:
+    raise httpx.ConnectError("pypi unreachable")
+
+
+@pytest.fixture
+def no_retry_wait(monkeypatch):
+    monkeypatch.setattr(pypi, "RETRY_WAITS", (0, 0))
+
+
+def test_a_cached_snapshot_cut_short_is_a_cache_miss(tmp_path):
+    """C1: a job killed while saving a snapshot, or a full disk, left a truncated file that every later run failed
+    on, at the same release. It now reads as not cached: CI's assembly keeps the indexed copy, and a run that
+    fetches artifacts builds it again."""
+    store = IndexStore.memory()
+    _full_ingest(store, tmp_path)
+    path = snapshot_path(tmp_path, "fakepkg", "2.0.0")
+    path.write_bytes(path.read_bytes()[:40])
+
+    report = _assemble(store, tmp_path)
+    assert report.cached == ["1.0.0"] and report.carried == ["2.0.0"] and list(report.failed) == ["2.0.0"]
+    assert _versions(store) == ["1.0.0", "2.0.0"]
+
+    with _client() as client:
+        rebuilt = ingest_package(
+            SPEC, POLICY, store, tmp_path, client=client, today=TODAY, assemble=False, log=_quiet
+        )
+    assert rebuilt.built == ["2.0.0"] and rebuilt.failed == {}
+    assert ApiSnapshot.load(path).version == "2.0.0"
+
+
+def test_a_snapshot_save_that_fails_leaves_the_file_it_replaces(tmp_path, monkeypatch):
+    """C1: a snapshot is written beside its file and moved into place, so a save cut short never leaves half of
+    one where the cache looks."""
+    path = snapshot_path(tmp_path, "fakepkg", "1.0.0")
+    ApiSnapshot(package="fakepkg", version="1.0.0", import_names=["fakepkg"]).save(path)
+    before = path.read_bytes()
+
+    def disk_full(obj, fh, **kwargs):
+        fh.write('{"package": "fakepkg", "symbols": [')
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr("deptime.ingest.snapshot.json.dump", disk_full)
+    with pytest.raises(OSError):
+        ApiSnapshot(package="fakepkg", version="1.0.0", import_names=["other"]).save(path)
+    assert path.read_bytes() == before
+    assert [p.name for p in path.parent.iterdir()] == ["1.0.0.json.gz"]
+
+
+def test_a_pypi_outage_keeps_the_indexed_releases_and_adds_no_other(tmp_path, no_retry_wait):
+    """C2: without PyPI's release list, a cached snapshot can't be told selected from yanked or out of policy, so
+    an outage rebuilds the releases the index already has, never every snapshot on disk."""
+    store = IndexStore.memory()
+    _full_ingest(store, tmp_path)
+    before = {r["version"]: (r["released_at"], r["source_file"]) for r in store.releases("fakepkg")}
+    yanked = ApiSnapshot.load(snapshot_path(tmp_path, "fakepkg", "2.0.0"))
+    yanked.version = "3.0.0"
+    yanked.save(snapshot_path(tmp_path, "fakepkg", "3.0.0"))
+
+    with httpx.Client(transport=httpx.MockTransport(_pypi_down)) as client:
+        report = ingest_package(SPEC, POLICY, store, tmp_path, client=client, log=_quiet)
+    assert "PyPI unavailable" in report.failed["*"] and report.stats.releases == 2
+    assert {r["version"]: (r["released_at"], r["source_file"]) for r in store.releases("fakepkg")} == before
+
+    # An index without the package takes the snapshots on disk, but only those built as the spec says today.
+    yanked.format -= 1
+    yanked.save(snapshot_path(tmp_path, "fakepkg", "3.0.0"))
+    fresh = IndexStore.memory()
+    with httpx.Client(transport=httpx.MockTransport(_pypi_down)) as client:
+        ingest_package(SPEC, POLICY, fresh, tmp_path, client=client, log=_quiet)
+    assert _versions(fresh) == ["1.0.0", "2.0.0"]
+
+
+def test_the_release_list_is_asked_for_again_after_a_pypi_error(tmp_path, no_retry_wait):
+    """C2: one 503 from PyPI no longer sends a package down the outage path; a 404 is an answer, not retried."""
+    asked: list[str] = []
+
+    def flaky(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        asked.append(url)
+        if url == "https://pypi.org/simple/fakepkg/":
+            return httpx.Response(503) if asked.count(url) == 1 else httpx.Response(200, json=_simple_index())
+        name = url.rsplit("/", 1)[-1]
+        return httpx.Response(200, content=WHEELS[name]) if name in WHEELS else httpx.Response(404)
+
+    with httpx.Client(transport=httpx.MockTransport(flaky)) as client:
+        report = ingest_package(
+            SPEC, POLICY, IndexStore.memory(), tmp_path, client=client, today=TODAY, log=_quiet
+        )
+        assert report.failed == {} and report.built == ["1.0.0", "2.0.0"]
+        assert asked.count("https://pypi.org/simple/fakepkg/") == 2
+        with pytest.raises(httpx.HTTPStatusError):
+            pypi.fetch_releases("nosuchpkg", client)
+    assert asked.count("https://pypi.org/simple/nosuchpkg/") == 1
+
+
+def test_untrusted_text_in_a_failure_stays_on_one_log_line(tmp_path, monkeypatch, capsys):
+    """C6: an exception can quote an archive member's name, and a line break in it could start a GitHub Actions
+    workflow command (`::add-mask::`, `::error::`) in the build's log."""
+    forged = "bad member a.py\n::add-mask::x\r\n::error::forged"
+
+    def explode(*args, **kwargs):
+        raise ValueError(forged)
+
+    lines: list[str] = []
+    monkeypatch.setattr(pipeline, "_build", explode)
+    with _client() as client:
+        report = ingest_package(
+            SPEC, POLICY, IndexStore.memory(), tmp_path, client=client, today=TODAY, log=lines.append
+        )
+    assert (
+        report.failed["1.0.0"] == f"ValueError: {forged}"
+    )  # kept as it was for the summary, which escapes it
+    failed = [line for line in lines if "FAILED" in line]
+    assert len(failed) == 2 and all("\n" not in line and "\r" not in line for line in lines)
+    assert "a.py\\n::add-mask::x\\r\\n::error::forged" in failed[0]
+
+    # A whole package's failure, reported by the command.
+    _cli_home(tmp_path, monkeypatch)
+    monkeypatch.setattr("deptime.ingest.pipeline.ingest_package", explode)
+    assert cli.main(["ingest", "httpx", "--into-downloaded"]) == 1
+    assert not any(line.startswith("::") for line in capsys.readouterr().err.splitlines())
+
+
+def _sdist(names: list[str]) -> bytes:
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+        for name in names:
+            data = b"def ok():\n    pass\n"
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            tf.addfile(info, io.BytesIO(data))
+    return buf.getvalue()
+
+
+def test_extraction_skips_member_names_with_control_characters(tmp_path):
+    """C6: a member name with a line break could reach the log through a parser's warning; no module has one."""
+    names = ["pkg-1.0/pkg/__init__.py", "pkg-1.0/pkg/a\n::error::forged.py", "pkg-1.0/pkg/b\x1b[31m.py"]
+    sdist = tmp_path / "pkg-1.0.tar.gz"
+    sdist.write_bytes(_sdist(names))
+    root = pypi.extract(sdist, tmp_path / "sdist")
+    assert sorted(p.name for p in (root / "pkg").iterdir()) == ["__init__.py"]
+
+    wheel = tmp_path / "pkg-1.0-py3-none-any.whl"
+    with zipfile.ZipFile(wheel, "w") as zf:
+        for name in names:
+            zf.writestr(name.removeprefix("pkg-1.0/"), "def ok():\n    pass\n")
+    root = pypi.extract(wheel, tmp_path / "wheel")
+    assert sorted(p.name for p in (root / "pkg").iterdir()) == ["__init__.py"]

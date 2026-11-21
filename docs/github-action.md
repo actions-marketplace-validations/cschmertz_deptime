@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7 # pin to a commit in your own workflows
-      - uses: cschmertz/deptime@v1.0.3
+      - uses: cschmertz/deptime@v1.1.3
 ```
 
 ## What it does
@@ -33,6 +33,9 @@ jobs:
    checks each one against the index at the new version. A use fails the check when the index shows it failing at the
    new version and not at the old one: a removed name, a keyword that's no longer accepted, an argument that's now
    required, or a call to something that only raises.
+5. An update to a release the index doesn't have yet (it is rebuilt twice a day) isn't checked: the summary says
+   "Not checked" and a warning marks it, and the step passes. Re-run the job later to check it. When the check can't
+   run at all (no index, a lockfile it can't read), the step fails, whatever `fail-on-break` says.
 
 ## What it runs, sends and fetches
 
@@ -71,7 +74,7 @@ that runs on `workflow_run`. That workflow checks out nothing, and treats the re
 Add these steps to the check job:
 
 ```yaml
-      - uses: cschmertz/deptime@v1.0.3
+      - uses: cschmertz/deptime@v1.1.3
         id: deptime
       - uses: actions/upload-artifact@v7 # pin to a commit in your own workflows
         if: always() && steps.deptime.outputs.report

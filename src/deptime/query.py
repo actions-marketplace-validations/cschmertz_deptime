@@ -173,9 +173,10 @@ OTHER_CAUSE = (
     " If no newer release changed it, the error has another cause (a different interpreter or venv, a shadowing"
     " local module, or a lazily-imported optional dependency)."
 )
-# "f() takes 2 positional arguments but 3 were given" (DT-CORE-09): the counts include a method's instance.
+# "f() takes 2 positional arguments but 3 were given" (DT-CORE-09): the counts include a method's instance. At most
+# 9 digits, so `int()` never meets one it refuses (over 4,300 digits, F4); no real call passes more.
 POSITIONAL_COUNT_RE = re.compile(
-    r"takes (?:from \d+ to )?(?P<takes>\d+) positional arguments? but (?P<given>\d+) (?:were|was) given"
+    r"takes (?:from \d+ to )?(?P<takes>\d{1,9}) positional arguments? but (?P<given>\d{1,9}) (?:were|was) given"
 )
 POSITIONAL_KINDS = {"positional-only", "positional or keyword"}
 # Where a user asks for a package DepTime doesn't index (DT-OSS-11).
@@ -878,7 +879,7 @@ class DepTime:
         if code is not None:
             uses = snippet.uses_in(code, tuple(spec.import_names))
             if uses is None:
-                read = "The code doesn't parse as Python, so nothing was read from it."
+                read = "The code doesn't parse as Python, or nests too deeply to read, so nothing was read from it."
             else:
                 queries, count = self._code_queries(name, version, queries, uses)
                 read = f"{count} name{'' if count == 1 else 's'} of {name} read from the code."
@@ -1142,6 +1143,8 @@ class DepTime:
             None,
         )
         req = self.store.requirement(name, row["ordinal"], other.name) if other else None
+        # The release's Requires-Dist entry: its marker is the project's text, so it is cleaned (audit E3).
+        req_text = untrusted_text(str(req)) if req else None
         allowed = (
             [
                 r
@@ -1157,7 +1160,7 @@ class DepTime:
                 if other is None
                 else f"{other.name}, which {name} {row['version']} doesn't require"
                 if req is None
-                else f"{other.name}, with no indexed release that {name} {row['version']} allows ({req})"
+                else f"{other.name}, with no indexed release that {name} {row['version']} allows ({req_text})"
             )
             return SymbolCheck(
                 path=full,
@@ -1169,7 +1172,7 @@ class DepTime:
         result = got.results[0]
         hint = (
             f"{lead or f'{via} comes from {other.name}'}: checked as `{target}` in {other.name} {pick}, the newest"
-            f" release {name} {row['version']} allows ({req})"
+            f" release {name} {row['version']} allows ({req_text})"
         )
         return result.model_copy(
             update={"path": full, "hint": hint + (f"; {result.hint}" if result.hint else "")}
@@ -2200,9 +2203,10 @@ class DepTime:
                 if (
                     not url.lower().startswith(("https://", "http://"))
                     or len(url) > 500
-                    or any(c.isspace() or ord(c) < 32 for c in url)
+                    # anything cleaning would change (whitespace, invisible or reordering characters, an image,
+                    # instruction-like text) means it isn't the page the project named (audit E3)
+                    or untrusted_text(url, 500) != url
                     or instruction_like(label)
-                    or instruction_like(url)
                 ):
                     continue
                 return Link(title=f"{name} {untrusted_text(label)}", url=url)

@@ -244,3 +244,25 @@ def test_a_subdirectory_lockfile_update_is_read_from_the_repository_root(repo):
     assert changes(read_pins(repo, "HEAD"), read_pins(repo)) == [
         Change("httpx", "0.27.2", "0.28.1", "svc/uv.lock")
     ]
+
+
+def test_a_byte_order_mark_doesnt_hide_a_pin(tmp_path):
+    """DT-CORE-81: Notepad saves `requirements.txt` with a BOM, which made its first line an invalid requirement."""
+    bom = b"\xef\xbb\xbf"
+    (tmp_path / "requirements.txt").write_bytes(bom + b"httpx==0.27.2\n")
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "uv.lock").write_bytes(bom + UV_LOCK.encode())
+    (tmp_path / "pyproject.toml").write_bytes(bom + b'[project]\nname = "My_Project"\n')
+    pins = read_pins(tmp_path)
+    assert pins.problems == []
+    assert pins.by_file["requirements.txt"] == {"httpx": "0.27.2"} and "httpx" in pins.by_file["sub/uv.lock"]
+    assert project_name(tmp_path) == "my-project"
+
+
+def test_a_pyproject_with_the_wrong_shapes_is_reported_not_a_crash(tmp_path):
+    """DT-CORE-80: `project = "x"` raised AttributeError out of `check-upgrade`, which exited 1 (a break)."""
+    for text in ('project = "x"\n', "[project]\ndependencies = 3\n", 'dependency-groups = "dev"\n'):
+        _write(tmp_path, {"pyproject.toml": text})
+        pins = read_pins(tmp_path)
+        assert "pyproject.toml" not in pins.by_file and pins.problems[0].startswith("pyproject.toml: "), text
+    assert project_name(tmp_path) is None

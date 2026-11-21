@@ -1,11 +1,16 @@
 """griffe extraction against a tiny on-disk package (no network)."""
 
 import gc
+import random
+import re
 import textwrap
+import time
 from pathlib import Path
 
 import griffe
+import pytest
 
+from deptime.ingest import snapshot
 from deptime.ingest.snapshot import ApiSnapshot, build_snapshot, external_star_imports
 
 FILES = {
@@ -4144,3 +4149,63 @@ def test_a_name_bound_to_a_union_of_classes_is_a_union(tmp_path):
     # Not a union of the package's classes, or `|` a metaclass may define: still an attribute.
     for name in ("Number", "Both", "Outside", "Custom", "Nothing"):
         assert symbols[f"un.{name}"].kind == "attribute", name
+
+
+# The patterns string literals were read with before C3, kept as the reference the scanner must match exactly:
+# snapshots don't change without a SNAPSHOT_FORMAT bump. A backslash matched both alternatives, so a run of them
+# the pattern couldn't close took exponential time (`"` and ~50 backslashes: hours).
+OLD_STRING_LITERAL_RE = re.compile(r"""(?P<q>["'])(?P<s>(?:\\.|(?!(?P=q)).)*)(?P=q)""")
+OLD_ADJACENT_LITERALS_RE = re.compile(r"""(?:f?(["'])(?:\\.|(?!\1).)*\1\s*)+""")
+
+
+def test_string_literals_read_as_before_in_linear_time():
+    rng = random.Random(20261121)
+    alphabet = "\"'\\fa \n\t"
+    for _ in range(40_000):
+        text = "".join(rng.choice(alphabet) for _ in range(rng.randint(0, 14)))
+        old = "".join(m.group("s") for m in OLD_STRING_LITERAL_RE.finditer(text))
+        assert snapshot._literal_text(text) == old, repr(text)
+        assert list(snapshot._literal_runs(text)) == [
+            m[0] for m in OLD_ADJACENT_LITERALS_RE.finditer(text)
+        ], repr(text)
+    source = 'warnings.warn(\n    "Client() is deprecated;" f" use {new}" \'\\\'s\' "instead", DeprecationWarning)\n'
+    assert list(snapshot._literal_runs(source)) == [m[0] for m in OLD_ADJACENT_LITERALS_RE.finditer(source)]
+    assert snapshot._notice(source) == "Client() is deprecated; use {new}\\'sinstead"
+
+    slow = '"' + "\\" * 5000 + "\nx = 'deprecated: use y'\n" + "'" + "\\" * 5000
+    start = time.perf_counter()
+    assert snapshot._notice(slow) == "deprecated: use y"
+    assert snapshot._literal_text(slow) == "deprecated: use y"
+    assert time.perf_counter() - start < 1
+
+
+def _symlink_dir(link: Path, target: Path) -> None:
+    try:
+        link.symlink_to(target, target_is_directory=True)
+    except OSError:  # Windows without the symlink privilege
+        pytest.skip("can't create symlinks here")
+
+
+def test_a_folder_linked_to_one_above_it_is_walked_once(tmp_path):
+    """C4: the PEP 706 tar filter keeps links that stay inside an sdist, so one can link a folder to a folder above
+    it. Every such link doubled the walk at each level, and two hung the build; a link that doesn't lead back is
+    still followed, as before."""
+    files = {
+        "looped/__init__.py": "from looped.sub import thing\n",
+        "looped/sub/__init__.py": "def thing():\n    pass\n",
+        "shared/extra.py": "def more():\n    pass\n",
+    }
+    root = _write(tmp_path, files)
+    _symlink_dir(root / "looped" / "linked", root / "shared")
+    for name in ("up", "again"):
+        _symlink_dir(root / "looped" / "sub" / name, root / "looped")
+    snap = build_snapshot("looped", "1.0", ["looped"], root)
+    assert sorted(snap.symbols) == [
+        "looped",
+        "looped.linked",
+        "looped.linked.extra",
+        "looped.linked.extra.more",
+        "looped.sub",
+        "looped.sub.thing",
+        "looped.thing",
+    ]

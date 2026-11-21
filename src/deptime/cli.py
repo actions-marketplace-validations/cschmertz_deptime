@@ -58,7 +58,7 @@ def _print(model) -> None:
 
 def cmd_ingest(args: argparse.Namespace, settings: Settings) -> int:
     from deptime.index.distribution import adopt_downloaded, mark_locally_built, read_local_meta
-    from deptime.ingest.pipeline import IngestReport, coverage_summary, ingest_package
+    from deptime.ingest.pipeline import IngestReport, coverage_summary, ingest_package, one_line
 
     coverage = load_coverage(settings.coverage_file)
     names = [p.name for p in coverage.packages] if args.all else args.packages
@@ -95,7 +95,7 @@ def cmd_ingest(args: argparse.Namespace, settings: Settings) -> int:
                 log=_err,
             )
         except Exception as exc:  # one broken package must not stop the rest of the run
-            _err(f"[{name}] FAILED: {type(exc).__name__}: {exc}")
+            _err(f"[{name}] FAILED: {type(exc).__name__}: {one_line(str(exc))}")
             failures += 1
             reports.append(IngestReport(name, failed={"*": f"{type(exc).__name__}: {exc}"}))
             continue
@@ -152,13 +152,21 @@ def cmd_diff(args: argparse.Namespace, settings: Settings) -> int:
 
 
 def _upgrade_changes(args: argparse.Namespace, root: Path):
-    """The dependency changes to check, and the base revision they were read against (DT-CORE-66)."""
+    """The dependency changes to check, the base revision they were read against (DT-CORE-66), and the pin files
+    that couldn't be read, with the reason (DT-CORE-80)."""
+    from packaging.version import InvalidVersion, Version
+
     from deptime import lockfiles
     from deptime.models import DependencyChange
 
     if args.package:
         if not args.to:
             raise ValueError("--package needs --to VERSION")
+        for flag, value in (("--to", args.to), ("--from", args.from_version)):
+            try:
+                Version(value) if value is not None else None
+            except InvalidVersion:
+                raise ValueError(f"{flag} {value} isn't a version (a pin such as 1.2.3)") from None
         name = canonicalize_name(args.package)
         before, source = args.from_version, None
         if before is None:
@@ -170,23 +178,39 @@ def _upgrade_changes(args: argparse.Namespace, root: Path):
                 raise ValueError(
                     f"no pinned version of {name} found in the project's files; pass --from VERSION"
                 )
-        return [DependencyChange(package=name, from_version=before, to_version=args.to, source=source)], None
+        change = DependencyChange(package=name, from_version=before, to_version=args.to, source=source)
+        return [change], None, []
     base_rev = args.base or "HEAD"
     base = lockfiles.read_pins(root, base_rev)
     head = lockfiles.read_pins(root)
-    for problem in base.problems + head.problems:
+    unread = [x.replace(": ", f" at {base_rev}: ", 1) for x in base.problems] + head.problems
+    for problem in unread:
         _err(f"deptime: not read: {problem}")
     own = lockfiles.project_name(root)
-    return [
-        DependencyChange(
-            package=c.package, from_version=c.from_version, to_version=c.to_version, source=c.source
-        )
-        for c in lockfiles.changes(base, head)
-        if c.package != own
-    ], base_rev
+    return (
+        [
+            DependencyChange(
+                package=c.package, from_version=c.from_version, to_version=c.to_version, source=c.source
+            )
+            for c in lockfiles.changes(base, head)
+            if c.package != own
+        ],
+        base_rev,
+        unread,
+    )
 
 
 def cmd_check_upgrade(args: argparse.Namespace, settings: Settings) -> int:
+    """Exit 0: no break; 1: a confirmed break; 2: the check couldn't run (CHANGELOG's versioning section). Exit 1 fails
+    a pull request as broken, so nothing unexpected may end in it (DT-CORE-80)."""
+    try:
+        return _check_upgrade(args, settings)
+    except Exception as exc:
+        _err(f"deptime: the check couldn't run: {type(exc).__name__}: {exc}")  # no traceback (Invariant 8)
+        return 2
+
+
+def _check_upgrade(args: argparse.Namespace, settings: Settings) -> int:
     from deptime import suppressions, upgrade
 
     root = Path(args.path).resolve()
@@ -194,14 +218,22 @@ def cmd_check_upgrade(args: argparse.Namespace, settings: Settings) -> int:
         _err(f"deptime: {args.path} is not a directory")
         return 2
     try:
-        changes, base = _upgrade_changes(args, root)
+        changes, base, pins_unread = _upgrade_changes(args, root)
     except (ValueError, OSError) as exc:
         _err(f"deptime: {exc}")
         return 2
     dt = _dt(settings)
+    covered = [c for c in changes if dt.coverage.get(c.package) or dt.coverage.installed_under(c.package)]
+    if dt.store is None and covered:
+        _err(
+            f"deptime: no index at {settings.index_path}, so {covered[0].package}'s update couldn't be checked;"
+            " run `deptime index pull`"
+        )
+        return 2
     dt.suppressions = suppressions.load(root)
-    code = upgrade.read_code(root, upgrade.project_files(root))
-    result = upgrade.check_upgrade(dt, args.path, code, changes, base)
+    files = upgrade.project_files(root)
+    code = upgrade.read_code(root, files)
+    result = upgrade.check_upgrade(dt, args.path, code, changes, base, unread=files, pins_unread=pins_unread)
     text = (
         result.model_dump_json(indent=2, exclude_none=True) + "\n"
         if args.format == "json"
@@ -214,7 +246,7 @@ def cmd_check_upgrade(args: argparse.Namespace, settings: Settings) -> int:
     if args.annotations:
         prefix = os.path.relpath(root, Path.cwd()).replace(os.sep, "/")
         sys.stdout.write(upgrade.to_annotations(result, "" if prefix == "." else prefix))
-    return 1 if result.breaks else 0
+    return 1 if result.breaks else 2 if result.pins_unread else 0
 
 
 def cmd_coverage(args: argparse.Namespace, settings: Settings) -> int:
@@ -243,7 +275,8 @@ def cmd_index(args: argparse.Namespace, settings: Settings) -> int:
                 manifest = dist.fetch_manifest(settings.index_url, client)
                 installed = local and dist.active_index(settings.index_path).exists()
                 current = installed and local.get("manifest", {}).get("sha256") == manifest.sha256
-                # A current index installed without verifying is downloaded again, so the file is checked.
+                # A current index installed without verifying is downloaded again and verified, and its file
+                # replaced unless it has the verified bytes.
                 if current and not args.force and (not verify or local.get("provenance")):
                     checked = ", build provenance verified" if local.get("provenance") else ""
                     _err(f"deptime: index already up to date (built {manifest.built_at}{checked})")
@@ -254,7 +287,8 @@ def cmd_index(args: argparse.Namespace, settings: Settings) -> int:
             except (dist.ProvenanceError, dist.IndexIncompatible) as exc:
                 _err(f"deptime: {str(exc).rstrip('.')}. {_UNCHANGED}")
                 return 1
-            except (httpx.HTTPError, ValueError) as exc:  # network, HTTP status, checksum, size, a bad file
+            # network, HTTP status, checksum, size, a bad manifest or file; OSError: a full disk, a file in use
+            except (httpx.HTTPError, ValueError, OSError) as exc:
                 if isinstance(exc, httpx.HTTPStatusError):  # a redirect's signed query string stays out
                     url = exc.request.url.copy_with(query=None)
                     reason = f"HTTP {exc.response.status_code} {exc.response.reason_phrase} from {url}"
@@ -329,11 +363,15 @@ def cmd_mcp(args: argparse.Namespace, settings: Settings) -> int:
 
 
 def cmd_serve(args: argparse.Namespace, settings: Settings) -> int:
+    from dataclasses import replace
+
     import uvicorn
 
     from deptime.server.http_app import create_app
 
-    uvicorn.run(create_app(settings), host=args.host or settings.host, port=args.port or settings.port)
+    # One host for both: the MCP transport checks Host/Origin only when the app is told it serves loopback (D3).
+    settings = replace(settings, host=args.host or settings.host, port=args.port or settings.port)
+    uvicorn.run(create_app(settings), host=settings.host, port=settings.port)
     return 0
 
 

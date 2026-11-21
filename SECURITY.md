@@ -29,4 +29,8 @@ Every published index has a signed [build provenance attestation](https://docs.g
     --signer-workflow cschmertz/deptime/.github/workflows/build-index.yml --source-ref refs/heads/main
   ```
 
-What it proves: the file was built by this repository's workflow from a commit on `main`, not uploaded by hand or by another workflow or branch. It doesn't protect against a malicious commit on `main` itself; such a build would still be signed, but the signature would be public in the transparency log and name the commit.
+What it proves: the file was built by this repository's workflow from a commit on `main`, not uploaded by hand or by another workflow or branch. It doesn't protect against a malicious commit on `main` itself; such a build would still be signed, but the signature would be public in the transparency log and name the commit. `main` can't be force-pushed or deleted (a repository ruleset), so the commit a build names stays in its history.
+
+## Releases
+
+`release.yml` publishes to PyPI with trusted publishing, so no token is stored anywhere. Its publishing job runs in the `pypi` environment, which only `v*` tags can use, and first checks that the tagged commit is on `main`. Release tags can't be moved or deleted once pushed.

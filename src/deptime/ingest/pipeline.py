@@ -11,6 +11,7 @@ import json
 import shutil
 import sqlite3
 import sys
+import zlib
 from collections.abc import Callable
 from contextlib import ExitStack
 from dataclasses import dataclass, field
@@ -54,6 +55,12 @@ class IngestReport:
 COVERAGE_BAR = 0.9  # DT-DATA-01: share of each package's selected releases the index must hold
 FRESHNESS_HOURS = 24  # DT-DATA-04: a selected release is indexed within this long of its upload
 _CACHED_ONLY_MISS = "no cached snapshot (cached-only run)"
+
+
+def one_line(text: str) -> str:
+    """Untrusted text (an exception message, which can quote an archive's member names) for one log line: a line
+    break in it could start a GitHub Actions workflow command (`::add-mask::`, `::error::`) (DT-DATA-85)."""
+    return "".join(ch if ch.isprintable() else ascii(ch)[1:-1] for ch in text)
 
 
 def _cell(text: str, limit: int = 200) -> str:
@@ -166,6 +173,11 @@ def coverage_summary(reports: list[IngestReport], max_listed: int = 5, now: date
     return "\n".join(lines) + "\n"
 
 
+# What reading a damaged snapshot file raises: gzip's BadGzipFile is an OSError, a file cut short an EOFError,
+# broken JSON or UTF-8 a ValueError, a payload of another shape the rest.
+UNREADABLE_SNAPSHOT = (OSError, EOFError, zlib.error, ValueError, LookupError, TypeError, AttributeError)
+
+
 def snapshot_path(cache_dir: Path, package: str, version: str) -> Path:
     return cache_dir / "snapshots" / package / f"{version}.json.gz"
 
@@ -174,7 +186,10 @@ def _cached_snapshot(cache_dir: Path, spec: PackageSpec, version: str) -> ApiSna
     path = snapshot_path(cache_dir, spec.name, version)
     if not path.exists():
         return None
-    snap = ApiSnapshot.load(path)
+    try:
+        snap = ApiSnapshot.load(path)
+    except UNREADABLE_SNAPSHOT:  # cut short or damaged: not cached (DT-DATA-85)
+        return None
     # Another extractor's, or built for other import names or namespace skips (a coverage.toml edit): rebuild it.
     current = (
         snap.format == SNAPSHOT_FORMAT
@@ -441,21 +456,27 @@ def ingest_package(
         try:
             releases = pypi.fetch_releases(spec.name, client)
         except httpx.HTTPError as exc:
-            # PyPI unreachable: rebuild from cached snapshots so a published index never silently loses a package.
-            cached = sorted((cache_dir / "snapshots" / spec.name).glob("*.json.gz"))
-            report.failed["*"] = (
-                f"PyPI unavailable ({type(exc).__name__}); used {len(cached)} cached snapshots"
+            # PyPI unreachable, so a published index never silently loses a package: rebuilt from cached snapshots.
+            # Without PyPI's list a snapshot on disk can't be told selected from yanked or out of policy, so the
+            # releases already indexed are rebuilt, and no other (DT-DATA-85); an index without the package takes
+            # the snapshots on disk. Each from its snapshot if built as the spec says today, else from the index.
+            folder = cache_dir / "snapshots" / spec.name
+            on_disk = {p.name.removesuffix(".json.gz") for p in folder.glob("*.json.gz")}
+            wanted = list(indexed) or sorted(on_disk)
+            report.cached = [v for v in wanted if v in on_disk]
+            report.carried = [v for v in wanted if v not in on_disk]
+            kept = (
+                f"kept its {len(indexed)} indexed releases"
+                if indexed
+                else f"used {len(on_disk)} cached snapshots"
             )
+            report.failed["*"] = f"PyPI unavailable ({type(exc).__name__}); {kept}"
             log(f"[{spec.name}] {report.failed['*']}")
-            snaps = [
-                LazySnapshot(p.name.removesuffix(".json.gz"), partial(ApiSnapshot.load, p)) for p in cached
-            ]
-            report.cached = [s.version for s in snaps]
-            carried = _carry_forward(spec, store, cache_dir, [v for v in indexed if v not in report.cached])
-            report.carried = [s.version for s in carried]
-            if assemble and (snaps or carried):
+            if assemble and wanted:
                 report.stats = store.rebuild_package(
-                    spec, snaps + carried, *_previous_release_info(indexed, list(indexed))
+                    spec,
+                    _carry_forward(spec, store, cache_dir, wanted),
+                    *_previous_release_info(indexed, list(indexed)),
                 )
             return report
         if versions:
@@ -507,7 +528,7 @@ def ingest_package(
                 snap = _build(spec, version, file, client, cache_dir, releases_of)
             except Exception as exc:  # keep going; the failure is reported and retried next run
                 report.failed[version] = f"{type(exc).__name__}: {exc}"
-                log(f"[{spec.name}] {version}: FAILED {report.failed[version]}")
+                log(f"[{spec.name}] {version}: FAILED {one_line(report.failed[version])}")
                 continue
             if not snap.symbols:
                 report.failed[version] = "no public symbols extracted: " + "; ".join(snap.errors[:3])

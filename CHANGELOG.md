@@ -61,7 +61,95 @@ are data: they can grow in any release.)
 
 ## [Unreleased]
 
+## [1.1.3] - 2026-11-21
+
+### Fixed
+- `explain_error` answers a traceback whose line number, or argument count, runs to thousands of digits; Python
+  refused to read the number, so the call failed (DT-CORE-84).
+- `deptime serve`'s JSON API checks a request body against the MCP tools' own parameter types and limits, and
+  answers a body of the wrong shape (a list, a number where text goes, `"limit": null`) with `400 bad_request`
+  instead of a server error. Names the tools don't take are still ignored; a missing argument's 400 now lists the
+  problems under `detail` (DT-HOST-06).
+
+### Security
+- `deptime serve --host` also sets which host names `/mcp` answers. The MCP transport's Host/Origin check, which
+  stops DNS rebinding, followed `DEPTIME_HOST` alone: `--host 0.0.0.0` refused every request not addressed to
+  localhost, and `--host 127.0.0.1` with `DEPTIME_HOST=0.0.0.0` ran a loopback server without the check
+  (DT-HOST-06).
+- A release reaches PyPI only from a `v*` tag on `main`: the publishing environment accepts only `v*` tags, and
+  the job checks that the tagged commit is on `main`. `main` and release tags can't be force-pushed or deleted
+  (DT-OSS-22).
+
+## [1.1.2] - 2026-11-21
+
 ### Added
+- Migration hints for the rest of the MCP Python SDK 2.0's removed names, from its migration guide: the
+  `ClientNotificationType`, `ClientResultType` and `ServerRequestType` aliases → the bare `ClientNotification`,
+  `ClientResult` and `ServerRequest`, `RequestParams.Meta` → `RequestParamsMeta`, the `mcp.server.fastmcp` module →
+  `mcp.server.mcpserver`, `FastMCPError` → `MCPServerError`, and `Context.fastmcp` → `Context.mcp_server` (#49).
+
+### Fixed
+- `deptime ingest` (for maintainers and self-builders, DT-DATA-85):
+  - a snapshot is written beside its file and moved into place, and a cached one that doesn't read back (cut short
+    by a killed job or a full disk) is built again; it stopped every later run at that release;
+  - when PyPI can't be reached, a package's releases already in the index are rebuilt, not every snapshot on disk,
+    which brought back yanked and out-of-policy releases; the release list is asked for three times first;
+  - an sdist whose folder links loop back no longer hangs the analysis, and neither does a string with a long run of
+    backslashes; the snapshots built are otherwise the same;
+  - an error's text is logged on one line, and archive members whose names have control characters are skipped, so
+    a crafted file name can't write GitHub Actions workflow commands into the build log.
+
+### Security
+- The twice-daily build starts from the published index only after checking its signed provenance
+  (`index pull --verify`), and stops if it can't, instead of going on from the snapshots alone. A file uploaded to
+  the release by hand was carried into the next build and signed with it (DT-OSS-21).
+
+## [1.1.1] - 2026-11-21
+
+### Fixed
+- `deptime index pull --force` replaces a damaged index file of the current build. The file is named after the build,
+  so a fresh download of the same build was thrown away when a file of that name was already there, and `--verify`
+  then recorded "build provenance verified" for a file it hadn't checked. The fresh download is now installed unless
+  the file has the same bytes (DT-OSS-20).
+- A download is checked more carefully before it is installed: decompressing stops past 50 times the downloaded size
+  (the index is about 15 times its `.xz`), so a small crafted file can't fill the disk; a file with views or
+  triggers, which the index never has, is refused, and the checks are cut off after 30 seconds instead of hanging
+  the background refresh (DT-OSS-20).
+- The temp files of a download that was interrupted (closing the MCP client during the first download or a daily
+  refresh) are deleted at the next start; they stayed for ever, up to about 860 MB each time (DT-OSS-20).
+- Index metadata without a readable check time no longer stops the background refresh, and a check time in the
+  future (a clock that was ahead) no longer keeps the index from being refreshed (DT-OSS-20).
+- With `DEPTIME_VERIFY_INDEX=1` (or `--verify`) and no `gh` on PATH, or an index not served from a GitHub release,
+  the download is refused before the file is downloaded, instead of after it on every start (DT-OSS-20).
+- `deptime index pull` reports a malformed manifest, a damaged download whose checksum matched, and a full disk as a
+  one-line error, not a traceback; as before, nothing is installed and the current index is kept (DT-OSS-20).
+
+### Security
+- Untrusted text from libraries is cleaned more thoroughly (DT-CORE-83). `!![a](url)` no longer turns into a live
+  Markdown image after cleaning; HTML with an attribute that fetches a URL (`<img src=...>`, `style=`, `poster=`) is
+  shown as text; and the characters Unicode marks as ignorable that aren't format characters (the combining grapheme
+  joiner, Hangul fillers, Mongolian variation selectors) are removed, so they no longer hide instruction-like text from
+  the filter. A changelog link whose URL cleaning would change is dropped, and a Requires-Dist marker quoted in a
+  `check_symbols` hint is cleaned. No text in the published index changes.
+- The Docker image no longer sets `DEPTIME_TRUST_PROXY_HEADERS=true`: a container run without a proxy in front of it
+  took any address a client put in `X-Forwarded-For`, which defeated the per-IP limits. `fly.toml` sets it, as Fly's
+  proxy appends the header (DT-HOST-05).
+
+### Changed
+- The docs say what `DEPTIME_OFFLINE=1` does: it turns off automatic downloads; `deptime index pull` and
+  `deptime ingest` still use the network when run.
+
+## [1.1.0] - 2026-11-21
+
+### Added
+- The upgrade check says when it didn't check an update because the index doesn't have the new release yet, instead
+  of passing it with "No breaks found": a Dependabot pull request opened before the twice-daily build compared the
+  old release with itself. The update is listed in a new `not_indexed` field with the reason in its `note` (a new
+  field of each change), the report says "Not checked", `--annotations` adds a warning, and the exit code stays 0.
+  From an older release, the check goes as far as the newest indexed one, keeps the breaks it finds there, and the
+  new `newer_than_index` field and the report say how far it got (DT-CORE-79).
+- `pins_unread` lists the pin files `check-upgrade` couldn't read, with the reason, and the report shows them; they
+  were only printed to stderr (DT-CORE-80).
 - `diff_versions` says which used names it can't check, and why, in a new `unchecked_uses` field, and its note
   points to it, instead of an empty answer that reads as "nothing changed" (DT-CORE-61).
 - `diff_versions` lists `deprecated_uses` when given `used_symbols`: every used path that is deprecated at
@@ -112,6 +200,11 @@ are data: they can grow in any release.)
   `provider_response_id`, the usage fields `request_tokens` / `response_tokens` → `input_tokens` / `output_tokens`,
   and four renamed arguments (`UsageLimits(request_tokens_limit=)` → `input_tokens_limit`, `Agent(history_processors=)`
   → `capabilities`, and two more).
+- Migration hints for the MCP Python SDK 2.0's client changes, from its migration guide: the `cursor` argument of
+  `ClientSession`'s four `list_*` methods → `params`, `ClientSessionGroup.call_tool(args=)` → `arguments`, the
+  OAuth client-credentials providers' `scopes=` → `scope`, `mcp.client.streamable_http.MCP_PROTOCOL_VERSION` →
+  `mcp.shared.inbound.MCP_PROTOCOL_VERSION_HEADER`, and the removed `mcp.client.websocket.websocket_client` →
+  `mcp.client.streamable_http.streamable_http_client` (#48).
 - `check_symbols` suggests the new keyword for a rejected one when a migration hint names it and the release takes
   it: "For `request_tokens_limit`, try `input_tokens_limit`." Before, the keyword was listed as rejected with no
   advice.
@@ -119,6 +212,21 @@ are data: they can grow in any release.)
   the message the old class now raises (DT-CORE-77).
 
 ### Fixed
+- `check-upgrade` keeps its exit-code promise: 2 when the check couldn't run, never 1 (a confirmed break) or 0. An
+  unexpected error exited 1 with a traceback, so the Action failed a pull request as broken; with no index (a failed
+  download, or offline with none) every package read "not covered" and it exited 0; a pin file it couldn't read (a
+  lockfile with merge-conflict markers) left its updates unchecked and exited 0, or 1 when a break was found
+  elsewhere. A `pyproject.toml` with `[tool] deptime = "off"` stopped `check-upgrade`, and `deptime mcp` at
+  start-up: the suppressions are now reported as not read. A file nesting deeper than the reader can follow (a few
+  hundred terms of `'a' + 'a' + ...`) counts as unreadable instead of crashing the check or the tools. A version that
+  isn't one (`--from latest`, `from_version=">=0.27"`) is refused rather than read as older than the index, which
+  made a use failing at both versions a break (DT-CORE-80).
+- Files that start with a byte-order mark, as some Windows editors save them, are read: such a Python file was
+  skipped with its breaks, and such a `requirements.txt` lost its first pin. Python files over 2 MB, which were left
+  out without a word, are counted in `files_unreadable` and the note (DT-CORE-81).
+- An update of a distribution that installs a covered package's code under another name (`pydantic-ai`,
+  `fastmcp-slim`, `typer-slim`, `pinecone-client` before 6) is checked as that package instead of reading "not
+  covered"; a project's suppressions may name either (DT-CORE-82).
 - `explain_error` explains a private method missing from the project's own subclass when another class of the
   library still has it, if the traceback ran through the module of the one class that lost it: CogVLM2's
   `_extract_past_from_model_output` error at transformers 4.52.4 now names `GenerationMixin`, which lost it after
@@ -650,7 +758,12 @@ A documentation release: the code is 0.1.13's, and every answer is the same.
 - The prebuilt index of 52 packages, downloaded on first run and refreshed daily; `deptime index pull|status|pack`;
   offline mode (`DEPTIME_OFFLINE=1`).
 
-[Unreleased]: https://github.com/cschmertz/deptime/compare/v1.0.2...HEAD
+[Unreleased]: https://github.com/cschmertz/deptime/compare/v1.1.3...HEAD
+[1.1.3]: https://github.com/cschmertz/deptime/compare/v1.1.2...v1.1.3
+[1.1.2]: https://github.com/cschmertz/deptime/compare/v1.1.1...v1.1.2
+[1.1.1]: https://github.com/cschmertz/deptime/compare/v1.1.0...v1.1.1
+[1.1.0]: https://github.com/cschmertz/deptime/compare/v1.0.3...v1.1.0
+[1.0.3]: https://github.com/cschmertz/deptime/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/cschmertz/deptime/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/cschmertz/deptime/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/cschmertz/deptime/compare/v0.2.3...v1.0.0

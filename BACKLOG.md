@@ -16,16 +16,16 @@ which of a project's code a dependency update breaks. Everything done before 202
 
 ---
 
-## Current state: stable, v1.0.3
+## Current state: stable, v1.1.3
 
-- **Released:** 1.0.3 (2026-11-17) is on PyPI, the MCP Registry and GitHub: the six tools, the upgrade check (a
+- **Released:** 1.1.3 (2026-11-21) is on PyPI, the MCP Registry and GitHub: the six tools, the upgrade check (a
   command, a GitHub Action, an MCP tool and a Claude Code plugin command), and the 1.x promise in CHANGELOG.md's
   versioning section: the contract only grows.
 - **Index:** 53 packages and 6,823 releases on 2026-11-17 (`SNAPSHOT_FORMAT` 29, schema 2); `index.sqlite.xz` is
   51.4 MB and the `.gz` 79.2 MB. `build-index` runs at 04:17 and 16:17 UTC, replaces the rolling `index` release and
   signs it. A build with no extraction change usually takes under 20 minutes; a `SNAPSHOT_FORMAT` bump means one cold
   build of about 3 hours (format 27's: 2 h 48 min).
-- **Checks that run without anyone:** `ci` on every push (568 offline tests), and `bench` on every code change and
+- **Checks that run without anyone:** `ci` on every push (679 offline tests), and `bench` on every code change and
   every published index. `bench` fails on a benchmark drop of more than 2 points, a traceback case that passed in the
   baseline and fails now, or a false-positive rate up by more than 1, and on the published index itself (`tests/test_golden.py`, DT-QA-03): older than 48 h, a package's newest
   release on PyPI for more than 24 h without being indexed, or a Tier A package's newest release without the names
@@ -134,6 +134,37 @@ in-sample run flags 0 of 3,291 working uses and fails no pull request without a 
 - [x] **DT-CORE-49** (2026-11-19, PR #34 by swpswpswp): `explain_error` explains an error from a function that
   only raises, when its message matches the installed release's record exactly: a `now_raises` finding with
   `raises` and `raises_since` (llama-index-core's `ServiceContext.from_defaults`).
+- [x] **DT-CORE-79** (2026-11-21): an update to a release the index doesn't have yet is listed as not checked
+  (`not_indexed`, a warning annotation, exit 0), never "No breaks found"; from an older release the check goes as
+  far as the newest indexed one (`newer_than_index`).
+- [x] **DT-CORE-80** (2026-11-21): `check-upgrade` exits 2 whenever it couldn't run: an unexpected error, no index,
+  an unreadable pin file (`pins_unread`), a version that isn't one; suppressions that aren't tables no longer stop
+  it or `deptime mcp`.
+- [x] **DT-CORE-81** (2026-11-21): files with a byte-order mark are read (Python files and pins); files over 2 MB
+  are counted as unread.
+- [x] **DT-CORE-82** (2026-11-21): `installed_as` distributions (`pydantic-ai`, `typer-slim`, ...) are checked as
+  the covered package.
+- [x] **DT-OSS-20** (2026-11-21): the index download replaces a damaged file of the current build (and records
+  provenance only for verified bytes), caps decompression, refuses views and triggers, deletes an interrupted
+  download's temp files, survives odd metadata times, refuses `--verify` before downloading when it can't verify,
+  and reports a bad manifest, a damaged file or a full disk without a traceback.
+- [x] **DT-CORE-83** (2026-11-21): untrusted text: every `!` before `[` and HTML attributes that fetch a URL are
+  defused, the other default-ignorable characters removed; a changelog URL cleaning would change, and a
+  Requires-Dist marker in a hint, go through the same check. No text in the published index changes.
+- [x] **DT-HOST-05** (2026-11-21): the Docker image no longer trusts `X-Forwarded-For` by default; `fly.toml`,
+  behind Fly's proxy, sets it.
+- [x] **DT-OSS-21** (2026-11-21): the build starts only from a published index whose signed provenance verifies,
+  and stops when the pull fails (`fresh` dispatches start from nothing); the shrink guard counts releases too.
+- [x] **DT-DATA-85** (2026-11-21): ingestion: snapshots saved atomically, a damaged one is a cache miss; a PyPI
+  outage rebuilds only the indexed releases, after retries; folder-link loops and backslash runs no longer hang a
+  build; exception text stays on one log line. Snapshots are unchanged, so no `SNAPSHOT_FORMAT` bump.
+- [x] **DT-CORE-84** (2026-11-21): a line number or argument count of thousands of digits no longer stops
+  `explain_error`.
+- [x] **DT-HOST-06** (2026-11-21): `serve --host` also sets the MCP transport's Host/Origin check; the JSON API
+  checks bodies against the MCP tools' parameters and answers a malformed one with 400.
+- [x] **DT-OSS-22** (2026-11-21): a release reaches PyPI only from a `v*` tag on `main` (the `pypi` environment's
+  tag rule and a check in the job); rulesets stop `main` and `v*` tags being force-pushed or deleted. No required
+  reviewer, so releases stay hands-off.
 
 **Phase 4, the fix (the model's part, outside DepTime): done.** DT-QA-27 met its bar on broken updates nobody had
 seen (`bench/agent-fix/qa27/results-2026-11-17.md`). Held from it: DepTime doesn't check a pydantic model's required

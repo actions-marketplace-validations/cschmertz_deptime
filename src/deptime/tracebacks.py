@@ -152,6 +152,11 @@ INFERRED_TYPE = {
 }
 
 
+def _line_number(digits: str) -> int:
+    """A frame's line number; 0 for one too long to be real, which `int()` would refuse past 4,300 digits (F4)."""
+    return int(digits) if len(digits) <= 18 else 0
+
+
 @dataclass
 class Frame:
     file: str
@@ -363,7 +368,7 @@ def _location_frames(lines: list[str], start: int, exc_index: int) -> list[Frame
     for i in range(start, exc_index):
         if (am := IPYTHON_ARROW_RE.match(lines[i])) and ipython:
             k = len(frames) - 1
-            if k in ipython and frames[k].code is None and int(am.group("line")) == frames[k].line:
+            if k in ipython and frames[k].code is None and _line_number(am.group("line")) == frames[k].line:
                 frames[k].code = am.group("code").strip()
             continue
         m = IPYTHON_LOCATION_RE.match(lines[i]) or PYTEST_FRAME_RE.match(lines[i])
@@ -373,7 +378,9 @@ def _location_frames(lines: list[str], start: int, exc_index: int) -> list[Frame
         # IPython prints the qualified name and the arguments: `Parameter.make_metavar(self, ctx)`.
         func = (m.group("func") or "<module>").strip().split("(", 1)[0] or "<module>"
         frames.append(
-            Frame(file=file, line=int(m.group("line")), function=func, module=_module_from_path(file))
+            Frame(
+                file=file, line=_line_number(m.group("line")), function=func, module=_module_from_path(file)
+            )
         )
         if m.re is IPYTHON_LOCATION_RE:
             ipython.add(len(frames) - 1)
@@ -383,7 +390,10 @@ def _location_frames(lines: list[str], start: int, exc_index: int) -> list[Frame
             file = m.group("file")
             frames.append(
                 Frame(
-                    file=file, line=int(m.group("line")), function="<unknown>", module=_module_from_path(file)
+                    file=file,
+                    line=_line_number(m.group("line")),
+                    function="<unknown>",
+                    module=_module_from_path(file),
                 )
             )
             break
@@ -431,7 +441,7 @@ def _signal_at(lines: list[str], exc_index: int, exc_type: str, exc_msg: str) ->
         frames.append(
             Frame(
                 file=fm.group("file"),
-                line=int(fm.group("line")),
+                line=_line_number(fm.group("line")),
                 function=(fm.group("func") or "<module>").strip(),
                 module=_module_from_path(fm.group("file")),
                 code=code,

@@ -34,7 +34,7 @@ uv run deptime mcp                        # local stdio server
 uv run python -m deptime.bench bench/cases --baseline bench/baseline.json   # exit 1 on a regression (`deptime index pull` first; CI's bench.yml runs it)
 ```
 
-The default home is `$XDG_CACHE_HOME/deptime`, else `~/.cache/deptime` (override with `DEPTIME_HOME`). Set `DEPTIME_OFFLINE=1` to disable all network access.
+The default home is `$XDG_CACHE_HOME/deptime`, else `~/.cache/deptime` (override with `DEPTIME_HOME`). Set `DEPTIME_OFFLINE=1` to turn off automatic downloads (the index download and its daily check); `deptime index pull` and `deptime ingest` still use the network when run.
 
 ## Invariants (don't break these)
 
@@ -49,7 +49,7 @@ The default home is `$XDG_CACHE_HOME/deptime`, else `~/.cache/deptime` (override
    - never damage the current index when a download fails.
 6. **Ingestion must never lose data:**
    - an empty run doesn't wipe an index;
-   - a PyPI outage rebuilds from cached snapshots;
+   - a PyPI outage rebuilds from cached snapshots (only the releases already indexed, if there are any);
    - one package's failure doesn't stop the run.
 7. **Version semantics:**
    - `pin_to_restore` uses `<=last_version_with`;

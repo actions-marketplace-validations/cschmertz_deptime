@@ -778,3 +778,241 @@ def test_index_pull_reports_a_failed_download_and_keeps_the_current_index(
     assert "could not pull the index" in capsys.readouterr().err
     assert dist.read_local_meta(cfg.index_path) == meta
     assert sorted(p.name for p in cfg.index_path.parent.iterdir() if "download" in p.name) == []
+
+
+# ---------------------------------------------------------------- audit 2026-11-20, session 2
+@pytest.mark.parametrize("verify", [False, True], ids=["force", "verify"])
+def test_a_damaged_file_of_the_current_build_is_replaced_by_the_fresh_download(
+    tmp_path, settings, fake_gh, verify
+):
+    # B1: the file is named after the build, so a new download of the same build used to be thrown away when a file
+    # of that name was there, while the metadata recorded the new download's provenance.
+    out, _ = _published(tmp_path)
+    cfg = _installed(settings, tmp_path, out)
+    active = dist.active_index(cfg.index_path)
+    good = active.read_bytes()
+    active.write_bytes(good[:4096] + b"\0" * (len(good) - 4096))  # damaged, or installed from other bytes
+    with _client(out) as client:
+        dist.download(GH_URL if verify else cfg.index_url, cfg.index_path, client, verify=verify)
+    assert dist.active_index(cfg.index_path) == active and active.read_bytes() == good
+    assert ("provenance" in dist.read_local_meta(cfg.index_path)) is verify
+
+
+def test_a_second_download_of_the_build_a_server_holds_open_is_not_needed(
+    tmp_path, settings, coverage, windows_locks
+):
+    """Another process installed this build already and serves from it: the same bytes aren't replaced."""
+    out, _ = _published(tmp_path)
+    cfg = _installed(settings, tmp_path, out)
+    server = IndexStore.open(dist.active_index(cfg.index_path))
+    with _client(out) as client:
+        dist.download(cfg.index_url, cfg.index_path, client)
+    assert DepTime(server, coverage).explain_error(HTTPX_TB, {"httpx": "0.28.1"}).findings
+    server.close()
+
+
+def _bomb(out, raw: bytes):
+    """Publish `raw` as the .xz of a new build, with a manifest that matches it."""
+    xz = out / dist.XZ_ASSET
+    xz.write_bytes(lzma.compress(raw))
+    _edit_manifest(
+        out, sha256="1" * 64, xz_sha256=hashlib.sha256(xz.read_bytes()).hexdigest(), xz_size=xz.stat().st_size
+    )
+
+
+def test_a_download_that_expands_far_beyond_its_size_is_refused_while_decompressing(
+    tmp_path, settings, monkeypatch
+):
+    # B3: decompression had no cap; a small file could fill the disk before the check that it is SQLite.
+    out, _ = _published(tmp_path)
+    _bomb(out, b"\0" * (8 * 1024**2))
+    monkeypatch.setattr(dist, "MIN_EXPANSION_CAP", 1024**2)
+    written = []
+    real = dist._copy_capped
+
+    def spy(src, dst, cap):
+        written.append(cap)
+        return real(src, dst, cap)
+
+    monkeypatch.setattr(dist, "_copy_capped", spy)
+    with _client(out) as client, pytest.raises(ValueError, match="expands to more than"):
+        dist.download("https://idx.test", tmp_path / "home" / "index.sqlite", client)
+    assert written and written[0] < 8 * 1024**2
+    assert not list((tmp_path / "home").glob("*.download*"))
+
+
+def test_the_real_index_expands_well_within_the_cap(tmp_path):
+    # The published index is ~15x its .xz and ~10x its .gz (808 MB from 52 MB and 80 MB on 2026-11-19).
+    assert dist.MAX_EXPANSION >= 3 * 16
+    out, manifest = _published(tmp_path)
+    raw = lzma.decompress((out / dist.XZ_ASSET).read_bytes())
+    assert len(raw) <= dist._expansion_cap(manifest.xz_size)
+
+
+def _sqlite_with(tmp_path, *statements):
+    import sqlite3
+
+    path = tmp_path / "evil.sqlite"
+    conn = sqlite3.connect(path)
+    conn.executescript(";\n".join(statements))
+    conn.commit()
+    conn.close()
+    return path
+
+
+@pytest.mark.parametrize(
+    "statements",
+    [
+        # a `meta` view that never finishes: the check used to hang, and with it the background refresh
+        (
+            "CREATE TABLE packages (name TEXT)",
+            "CREATE VIEW meta AS WITH RECURSIVE r(key, value) AS (SELECT 'k', 'v' UNION ALL"
+            " SELECT key, value FROM r) SELECT key, value FROM r",
+        ),
+        (
+            "CREATE TABLE meta (key TEXT, value TEXT)",
+            "INSERT INTO meta VALUES ('schema_version', '2')",
+            "CREATE TABLE packages (name TEXT)",
+            "CREATE VIEW spans AS SELECT 1",
+        ),
+        (
+            "CREATE TABLE meta (key TEXT, value TEXT)",
+            "INSERT INTO meta VALUES ('schema_version', '2')",
+            "CREATE TABLE packages (name TEXT)",
+            "CREATE TRIGGER t AFTER INSERT ON packages BEGIN DELETE FROM meta; END",
+        ),
+    ],
+    ids=["recursive-view", "view", "trigger"],
+)
+def test_a_downloaded_file_with_views_or_triggers_is_refused(tmp_path, statements):
+    # B3: the index never has views or triggers; a downloaded file that does isn't opened as one.
+    with pytest.raises(ValueError, match="views or triggers"):
+        dist._validate(_sqlite_with(tmp_path, *statements))
+
+
+def test_leftovers_of_an_interrupted_download_are_cleaned_up(tmp_path, settings):
+    # B4: a download killed midway (the refresh runs in a daemon thread) left its temp files for ever.
+    import os
+
+    out, _ = _published(tmp_path)
+    cfg = _installed(settings, tmp_path, out)
+    home = cfg.index_path.parent
+    old = [
+        home / "index.sqlite.download-a1b2.xz",
+        home / "index.sqlite.download-c3d4.sqlite",
+        home / "index.sqlite.download-a1b2.xz.e5f6.sigstore.json",
+        home / "index.sqlite.meta.json.g7h8.tmp",
+    ]
+    fresh = home / "index.sqlite.download-zz99.xz"  # another process may be downloading right now
+    hours_ago = time.time() - 3 * 3600
+    for path in [*old, fresh]:
+        path.write_bytes(b"partial")
+    for path in old:
+        os.utime(path, (hours_ago, hours_ago))
+    with _client(out) as client:
+        assert dist.ensure_index(cfg, client=client).message == "index is fresh"
+    assert [p for p in old if p.exists()] == [] and fresh.exists()
+
+
+@pytest.mark.parametrize(
+    "stamp",
+    [None, "not a date", "2026-11-20T10:00:00", "2999-01-01T00:00:00+00:00", 7],
+    ids=["missing", "junk", "naive", "future", "number"],
+)
+def test_metadata_with_an_unreadable_or_future_check_time_is_checked_again(tmp_path, settings, stamp):
+    # B5: the parse raised outside the try (and killed the refresh thread); a future time suppressed refreshing.
+    out, _ = _published(tmp_path)
+    cfg = _installed(settings, tmp_path, out)
+    meta = dist.read_local_meta(cfg.index_path)
+    meta.pop("downloaded_at")
+    meta.pop("checked_at")
+    if stamp is not None:
+        meta["checked_at"] = stamp
+    dist.meta_path(cfg.index_path).write_text(json.dumps(meta))
+    calls: list[str] = []
+    with _client(out, calls=calls) as client:
+        result = dist.ensure_index(cfg, client=client)
+    if stamp == "2026-11-20T10:00:00":  # naive: read as UTC, so it is fresh or stale like any other
+        assert result.message in ("index is fresh", "index is up to date")
+    else:
+        assert result.message == "index is up to date" and calls == ["https://idx.test/manifest.json"]
+
+
+def _pull(monkeypatch, cfg, client_factory):
+    from deptime import cli
+
+    monkeypatch.setenv("DEPTIME_HOME", str(cfg.index_path.parent))
+    monkeypatch.setenv("DEPTIME_INDEX_URL", "https://idx.test")
+    for name in ("DEPTIME_INDEX_PATH", "DEPTIME_VERIFY_INDEX", "DEPTIME_OFFLINE"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(dist, "http_client", client_factory)
+    return cli.main(["index", "pull", "--force"])
+
+
+def test_index_pull_reports_a_truncated_download_without_a_traceback(tmp_path, settings, monkeypatch, capsys):
+    # B6: EOFError from a truncated .xz whose checksum matched printed a traceback.
+    out, _ = _published(tmp_path)
+    cfg = _installed(settings, tmp_path, out)
+    meta = dist.read_local_meta(cfg.index_path)
+    xz = out / dist.XZ_ASSET
+    xz.write_bytes(xz.read_bytes()[: xz.stat().st_size // 2])
+    _edit_manifest(out, xz_sha256=hashlib.sha256(xz.read_bytes()).hexdigest(), xz_size=xz.stat().st_size)
+    capsys.readouterr()
+    assert _pull(monkeypatch, cfg, lambda: _client(out)) == 1
+    err = capsys.readouterr().err
+    assert "could not pull the index" in err and "didn't decompress" in err and "Traceback" not in err
+    assert dist.read_local_meta(cfg.index_path) == meta
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [{"size": None}, {"size": "80 MB"}, {"sha256": 5}, {"schema_version": None}],
+    ids=["no-size", "text-size", "number-sha", "no-schema"],
+)
+def test_index_pull_reports_a_malformed_manifest_without_a_traceback(
+    tmp_path, settings, monkeypatch, capsys, changes
+):
+    # B6: a manifest missing `size` raised TypeError.
+    out, _ = _published(tmp_path)
+    cfg = _installed(settings, tmp_path, out)
+    _edit_manifest(out, xz_sha256=None, xz_size=None, **changes)
+    capsys.readouterr()
+    assert _pull(monkeypatch, cfg, lambda: _client(out)) == 1
+    err = capsys.readouterr().err
+    assert "could not pull the index" in err and "manifest" in err and "Traceback" not in err
+
+
+def test_index_pull_reports_a_full_disk_without_a_traceback(tmp_path, settings, monkeypatch, capsys):
+    # B6: OSError (ENOSPC) while writing printed a traceback; the index and temp files are left as they were.
+    import errno
+
+    out, _ = _published(tmp_path)
+    cfg = _installed(settings, tmp_path, out)
+    meta = dist.read_local_meta(cfg.index_path)
+
+    def full(*_args, **_kwargs):
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    monkeypatch.setattr(dist, "_copy_capped", full)
+    capsys.readouterr()
+    assert _pull(monkeypatch, cfg, lambda: _client(out)) == 1
+    err = capsys.readouterr().err
+    assert "could not pull the index" in err and "No space left on device" in err and "Traceback" not in err
+    assert dist.read_local_meta(cfg.index_path) == meta
+    assert not list(cfg.index_path.parent.glob("*.download*"))
+
+
+@pytest.mark.parametrize("why", ["no-gh", "not-github"])
+def test_a_download_that_cant_be_verified_is_refused_before_downloading_it(
+    tmp_path, settings, monkeypatch, fake_gh, why
+):
+    # B7: without gh, or from a server that isn't a GitHub release, the whole file was downloaded first.
+    out, _ = _published(tmp_path)
+    cfg = _local(settings, tmp_path)
+    url = GH_URL if why == "no-gh" else "https://idx.test"
+    if why == "no-gh":
+        monkeypatch.setattr(dist, "_find_gh", lambda: None)
+    calls: list[str] = []
+    with _client(out, calls=calls) as client, pytest.raises(dist.ProvenanceError):
+        dist.download(url, cfg.index_path, client, verify=True)
+    assert calls == [f"{url}/manifest.json"] and fake_gh.calls == []

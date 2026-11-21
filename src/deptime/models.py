@@ -451,6 +451,11 @@ class DependencyChange(BaseModel):
         description="The file the change was read from (`uv.lock`, `requirements.txt`, ...), relative to the project;"
         " None when the versions were given.",
     )
+    note: str | None = Field(
+        default=None,
+        description="Why the update wasn't checked, for one listed in `skipped` (a version that isn't one) or"
+        " `not_indexed`.",
+    )
 
 
 class UseLocation(BaseModel):
@@ -515,6 +520,11 @@ class PackageUpgrade(BaseModel):
     )
     notices: list[UpgradeNotice] = Field(default_factory=list)
     note: str | None = None
+    newer_than_index: bool = Field(
+        default=False,
+        description="True when to_version is newer than every indexed release: the check went only as far as"
+        " resolved_version, so a break the newer release brings isn't seen yet.",
+    )
 
 
 class UpgradeCheckResult(BaseModel):
@@ -530,7 +540,20 @@ class UpgradeCheckResult(BaseModel):
         description="Changed packages DepTime doesn't index, so nothing was checked for them.",
     )
     skipped: list[DependencyChange] = Field(
-        default_factory=list, description="Packages added or removed: there's no upgrade to check."
+        default_factory=list,
+        description="Changes with no upgrade to check: a package added or removed, or a version that isn't one"
+        " (`>=0.27`); `note` says which.",
+    )
+    not_indexed: list[DependencyChange] = Field(
+        default_factory=list,
+        description="Covered packages whose update the index can't compare yet, so nothing was checked: to_version"
+        " is newer than the newest indexed release (the index is rebuilt twice a day) or older than the earliest, and"
+        " the nearest indexed release is the old version's own. `note` says which.",
+    )
+    pins_unread: list[str] = Field(
+        default_factory=list,
+        description="Pin files that couldn't be read, each with the reason: the updates in them weren't checked, and"
+        " `deptime check-upgrade` exits 2 when one is and no break was found.",
     )
     breaks: int = Field(
         default=0, description="Confirmed breaks across `checked`; `deptime check-upgrade` exits 1 when > 0."
@@ -538,7 +561,8 @@ class UpgradeCheckResult(BaseModel):
     files_read: int = 0
     files_unreadable: list[str] = Field(
         default_factory=list,
-        description="Python files that don't parse, so nothing was read from them (first 20).",
+        description="Python files nothing was read from (first 20): they don't parse, nest too deeply to read, are"
+        " over 2 MB or couldn't be opened.",
     )
     suppressed: int = Field(
         default=0, description="Breaks and notices left out by the project's suppressions; `note` says so."

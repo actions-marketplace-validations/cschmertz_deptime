@@ -6,7 +6,7 @@
 
 - **The only network request:** downloading `manifest.json` and the index (`index.sqlite.xz`; deptime 0.1.3 and earlier fetch the same file as `index.sqlite.gz`) from this repo's GitHub Releases, at most once a day. Like any download, it reveals the user's IP address to GitHub.
 - **No telemetry,** analytics or crash reporting.
-- **`DEPTIME_OFFLINE=1`** disables all network access.
+- **`DEPTIME_OFFLINE=1`** turns off automatic downloads: `deptime mcp`, `deptime serve` and the CLI's answers never touch the network. Commands that exist to download, `deptime index pull` and `deptime ingest`, still do when you run them.
 - **Tracebacks and `pip freeze` output** are processed in memory and never written to disk.
 
 ## Hosted mode (optional `deptime serve`): data we receive and keep
@@ -28,7 +28,12 @@
   - sha256 verified against PyPI;
   - 200 MB cap;
   - zip-slip guard;
-  - PEP 706 `filter="data"` on tarballs.
+  - PEP 706 `filter="data"` on tarballs;
+  - no member whose name has a control character or line break: no module has one, and parsers' warnings print file names to the build log (DT-DATA-85).
+- **Analysis bounded by the code, not the input (DT-DATA-85):**
+  - a folder link is followed only when it doesn't lead back to a folder above it, and at most 1,000 times per walk, so a crafted sdist can't multiply the walk;
+  - string literals are read in one pass, not with a pattern that backtracked exponentially on a run of backslashes.
+- **Build log:** exception text, which can quote an archive's file names, is logged on one line, so it can't start a GitHub Actions workflow command (`::add-mask::`, `::error::`).
 - **Scope:** only allowlisted, popular packages (`src/deptime/coverage.toml`).
 
 ## Untrusted content we *emit*
@@ -50,6 +55,7 @@ Deprecation messages come from third-party source. A malicious or compromised pa
 - A failed or corrupt download never replaces the current index (tested).
 - A locally built index is never replaced automatically.
 - **Build provenance (DT-OSS-09):** the manifest and the files come from the same source, so the checksum alone can't catch a release asset replaced with a token. Each published file therefore has a signed SLSA provenance attestation from `build-index.yml` (Sigstore, recorded in the public transparency log). `deptime index pull --verify`, or `DEPTIME_VERIFY_INDEX=1` for every download, installs an index only when it names this repository's build workflow on `main`, on a GitHub-hosted runner ([SECURITY.md](../SECURITY.md#verifying-the-index)).
+- **The build verifies too (DT-OSS-21):** each build starts from the published index, installed with `--verify`, and stops when the pull fails. A file uploaded by hand is therefore never carried into the next build and signed with it.
 - **Gap:** verifying is opt-in, since it needs the GitHub CLI. It doesn't cover a malicious commit on `main`, which would be built and signed like any other.
 - **Impact if it happened:** the index is plain data read by parameterised SQL; it isn't executed. The worst case is misleading answers or injected text in deprecation messages, which the item above mitigates.
 

@@ -5,6 +5,7 @@ import pytest
 from mcp import Client
 from starlette.testclient import TestClient
 
+from deptime import cli
 from deptime.server.http_app import create_app
 from deptime.server.mcp_app import build_mcp
 from deptime.server.metering import InMemoryQuotaStore, MeteringMiddleware, identify
@@ -146,3 +147,85 @@ async def test_spoofed_forwarded_for_does_not_bypass_the_ip_limit(settings):
     )
     # Headers are ignored entirely unless proxy headers are trusted.
     assert identify(fly_headers, proxy_ip, settings) == identify({}, proxy_ip, settings)
+
+
+def _served_app(monkeypatch, settings, host: str | None):
+    """The app `deptime serve --host <host>` would hand to uvicorn, and the address it would bind."""
+    import uvicorn
+
+    started = {}
+    monkeypatch.setattr(uvicorn, "run", lambda app, host, port: started.update(app=app, host=host, port=port))
+    cli.cmd_serve(SimpleNamespace(host=host, port=None), settings)
+    return started["app"], started["host"]
+
+
+def _mcp_statuses(app, *host_headers: str) -> list[int]:
+    initialize = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-06-18",
+            "capabilities": {},
+            "clientInfo": {"name": "t", "version": "1"},
+        },
+    }
+    with TestClient(app) as http:  # an app's session manager starts once
+        return [
+            http.post(
+                "/mcp", json=initialize, headers={"Host": h, "Accept": "application/json, text/event-stream"}
+            ).status_code
+            for h in host_headers
+        ]
+
+
+def test_serve_host_also_sets_which_host_names_mcp_answers(monkeypatch, settings):
+    """D3: `--host` reached uvicorn but not the MCP transport's Host/Origin check, which follows the configured
+    host. Bound to every interface, /mcp refused every request not addressed to localhost (421); bound to loopback
+    with DEPTIME_HOST=0.0.0.0, it ran without the check that stops DNS rebinding."""
+    app, bound = _served_app(monkeypatch, settings, "0.0.0.0")  # the fixture's DEPTIME_HOST is 127.0.0.1
+    assert bound == "0.0.0.0" and _mcp_statuses(app, "deptime.example.com") == [200]
+
+    app, bound = _served_app(monkeypatch, replace(settings, host="0.0.0.0"), "127.0.0.1")
+    assert bound == "127.0.0.1" and _mcp_statuses(app, "rebind.example.com", "127.0.0.1:8000") == [421, 200]
+
+    app, bound = _served_app(monkeypatch, settings, None)  # no --host: the setting
+    assert bound == "127.0.0.1" and _mcp_statuses(app, "rebind.example.com") == [421]
+
+
+def test_rest_rejects_a_malformed_body_with_400(settings):
+    """D5: a body of the wrong shape crashed the handler (500, with a stack trace in the server log); the REST API
+    now checks it against the same parameter types and limits as the MCP tools."""
+    bad = [
+        ("explain-error", [HTTPX_TB]),  # not an object
+        ("explain-error", {"traceback": 5}),
+        ("explain-error", {"traceback": HTTPX_TB, "installed_versions": ["httpx==0.28.1"]}),
+        ("explain-error", {"traceback": HTTPX_TB, "min_confidence": "certain"}),
+        ("explain-error", {}),
+        ("diff-versions", {"package": "httpx", "from_version": "0.27.2", "limit": None}),
+        ("diff-versions", {"package": "httpx", "from_version": "0.27.2", "limit": 10_000}),
+        ("check-symbols", {"package": "httpx", "version": "0.28.1", "symbols": 5}),
+        ("check-upgrade", {"package": "httpx", "from_version": "0.27.2", "files": {"a.py": 1}}),
+        ("symbol-history", {"package": ["httpx"], "path": "httpx.Client"}),
+    ]
+    with TestClient(create_app(replace(settings, anon_daily_limit=100))) as http:
+        for tool, body in bad:
+            r = http.post(f"/v1/{tool}", json=body)
+            assert r.status_code == 400 and r.json()["error"] == "bad_request", (tool, body, r.text)
+        # Names the tools don't take are still ignored, and the values the MCP tools accept still work.
+        r = http.post(
+            "/v1/diff-versions",
+            json={
+                "package": "httpx",
+                "from_version": "0.27.2",
+                "limit": "5",
+                "include_added": "false",
+                "x": 1,
+            },
+        )
+        assert r.status_code == 200 and r.json()["to_version"] == "0.28.1"
+        r = http.post(
+            "/v1/check-symbols",
+            json={"package": "httpx", "version": "0.28.1", "symbols": [{"path": "httpx.Client"}]},
+        )
+        assert r.status_code == 200 and r.json()["results"][0]["status"] == "present"

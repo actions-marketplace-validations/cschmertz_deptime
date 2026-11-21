@@ -9,6 +9,7 @@ from __future__ import annotations
 import ast
 import copy
 import gzip
+import io
 import json
 import keyword
 import os
@@ -17,7 +18,7 @@ import string
 import sys
 import textwrap
 import warnings
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from collections.abc import Set as AbstractSet
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
@@ -42,9 +43,6 @@ SNAPSHOT_FORMAT = 29  # bump when extraction changes: cached snapshots in anothe
 MAX_DEPTH = 12  # guards pathological re-export cycles
 
 DEPRECATED_DECORATOR_RE = re.compile(r"^(?:[\w.]+\.)?deprecated\b(?:\(.*\))?$", re.S)
-STRING_LITERAL_RE = re.compile(r"""(?P<q>["'])(?P<s>(?:\\.|(?!(?P=q)).)*)(?P=q)""")
-# One or more adjacent single-line literals (implicit concatenation may span lines via the \s* gap).
-ADJACENT_LITERALS_RE = re.compile(r"""(?:f?(["'])(?:\\.|(?!\1).)*\1\s*)+""")
 WARNING_CATEGORY_RE = re.compile(
     r"\b(?:DeprecationWarning|PendingDeprecationWarning|FutureWarning|\w*Deprecat\w*Warning)\b"
 )
@@ -204,8 +202,19 @@ class ApiSnapshot:
             }
             for c in self.classes.values()
         ]
-        with gzip.open(path, "wt", encoding="utf-8") as fh:
-            json.dump(payload, fh, separators=(",", ":"), sort_keys=True)
+        # Written beside the file and moved into place (DT-DATA-85): a job killed mid-save, or a full disk, left
+        # half a file where the cache looks. The gzip header names the file, as when it was written in place.
+        tmp = path.with_name(f".{path.name}.{os.getpid()}.part")
+        try:
+            with (
+                tmp.open("wb") as raw,
+                gzip.GzipFile(path.name, "wb", fileobj=raw) as gz,
+                io.TextIOWrapper(gz, encoding="utf-8") as fh,
+            ):
+                json.dump(payload, fh, separators=(",", ":"), sort_keys=True)
+            os.replace(tmp, path)
+        finally:
+            tmp.unlink(missing_ok=True)
 
     @classmethod
     def load(cls, path: Path) -> ApiSnapshot:
@@ -328,8 +337,75 @@ def _params(func: griffe.Function) -> list[dict[str, Any]]:
     ]
 
 
+# String literals in source text are found by a scan, not a pattern (DT-DATA-85). It reads exactly what these
+# patterns found, which `test_string_literals_read_as_before_in_linear_time` checks against them:
+#   one literal:          (?P<q>["'])(?P<s>(?:\\.|(?!(?P=q)).)*)(?P=q)
+#   adjacent literals:    (?:f?(["'])(?:\\.|(?!\1).)*\1\s*)+   (implicit concatenation, possibly over lines)
+# A backslash matched both alternatives, so a run of them the pattern couldn't close took exponential time.
+_QUOTE_RE = re.compile(r"[\"']")
+
+
+def _closing_quote(text: str, start: int) -> int:
+    """Where the literal opened by the quote at `start` closes on its line, as the pattern above finds it, else -1:
+    reading escapes as pairs, the first unescaped quote of the same kind; if none, the pattern backtracks to the
+    line's last quote of that kind, reading the backslash before it as an ordinary character."""
+    quote = text[start]
+    end = text.find("\n", start + 1)
+    end = len(text) if end < 0 else end
+    i = start + 1
+    while i < end:
+        if text[i] == quote:
+            return i
+        i += 2 if text[i] == "\\" and i + 1 < end else 1
+    return text.rfind(quote, start + 1, end)
+
+
+def _string_literals(text: str) -> Iterator[tuple[int, int]]:
+    """The opening and closing quote of each literal in `text`, left to right."""
+    pos = 0
+    while (found := _QUOTE_RE.search(text, pos)) is not None:
+        close = _closing_quote(text, found.start())
+        if close < 0:
+            pos = found.start() + 1
+        else:
+            yield found.start(), close
+            pos = close + 1
+
+
 def _literal_text(chunk: str) -> str:
-    return "".join(m.group("s") for m in STRING_LITERAL_RE.finditer(chunk))
+    """The contents of every string literal in `chunk`, joined."""
+    return "".join(chunk[start + 1 : close] for start, close in _string_literals(chunk))
+
+
+def _literal_end(text: str, i: int) -> int:
+    """The end of the literal starting at `i`, an `f` prefix included, else -1."""
+    if text.startswith("f", i) and i + 1 < len(text) and text[i + 1] in "\"'":
+        i += 1
+    if i >= len(text) or text[i] not in "\"'":
+        return -1
+    close = _closing_quote(text, i)
+    return close + 1 if close >= 0 else -1
+
+
+def _literal_runs(text: str) -> Iterator[str]:
+    """Each run of adjacent string literals in `text` with the whitespace after it, left to right."""
+    pos = 0
+    while (found := _QUOTE_RE.search(text, pos)) is not None:
+        quote = found.start()
+        start = quote - 1 if quote > pos and text[quote - 1] == "f" else quote
+        end = _literal_end(text, start)
+        if end < 0:
+            pos = quote + 1
+            continue
+        while True:
+            while end < len(text) and text[end].isspace():
+                end += 1
+            after = _literal_end(text, end)
+            if after < 0:
+                break
+            end = after
+        yield text[start:end]
+        pos = end
 
 
 def deprecation_message(obj: griffe.Object) -> str | None:
@@ -1455,17 +1531,11 @@ def _first_notice(source: str) -> str | None:
 
 def _notice(text: str) -> str | None:
     """Joined implicitly concatenated string literals in `text`: the first that reads like a deprecation."""
-    for m in ADJACENT_LITERALS_RE.finditer(text):
-        literal = _literal_text(m.group(0))
+    for run in _literal_runs(text):
+        literal = _literal_text(run)
         if DEPRECATION_WORDS_RE.search(literal):
             return literal.strip()[:400]
     return None
-
-
-def _literal_message(text: str) -> str | None:
-    """A warning's text from the code that builds it: the literal that reads like a deprecation, else all of them."""
-    joined = " ".join(_literal_text(m.group(0)) for m in ADJACENT_LITERALS_RE.finditer(text))
-    return _notice(text) or joined.strip()[:400] or None
 
 
 def _parse_function(source: str) -> tuple[ast.AST, str] | None:
@@ -4499,12 +4569,43 @@ def keep_inherited_inits(mod: griffe.Module) -> None:
                 cls.del_member("__init__")
 
 
+class _FolderLinks:
+    """The folder symlinks one walk of an extracted release follows (DT-DATA-85). The PEP 706 tar filter keeps links
+    that stay inside an sdist, so one can link a folder to a folder above it: each such link doubled the walk at
+    every level. A link is followed unless it leads back to a folder on the way to it, and at most `LIMIT` times
+    per walk, so a fan of links can't multiply the walk either. A tree without such links walks as before."""
+
+    LIMIT = 1000
+
+    def __init__(self) -> None:
+        self.followed = 0
+
+    def below(self, folder: str, above: frozenset[str]) -> frozenset[str] | None:
+        """The folders on the way to what's below `folder`, if the walk goes in, given those on the way to it."""
+        real = os.path.realpath(folder)
+        if real in above:
+            return None
+        if os.path.islink(folder):
+            if self.followed >= self.LIMIT:
+                return None
+            self.followed += 1
+        return above | {real}
+
+
 def _sorted_py_modules(self: griffe_finder.ModuleFinder, path: Path):
     """griffe's `ModuleFinder._filter_py_modules`, walking folders and files in sorted order (DT-DATA-30): unsorted,
     modules loaded in the file system's order, APFS's on macOS and ext4's on CI, and a few numpy re-exports resolved
-    to different definitions."""
+    to different definitions. Folder links are followed as `_FolderLinks` allows."""
+    links = _FolderLinks()
+    above = {os.fspath(path): frozenset({os.path.realpath(path)})}
     for root, dirs, files in os.walk(path, topdown=True, followlinks=True):
-        dirs[:] = sorted(d for d in dirs if d != "__pycache__")
+        on_the_way, kept = above.pop(root), []
+        for d in sorted(d for d in dirs if d != "__pycache__"):
+            folder = os.path.join(root, d)
+            if (below := links.below(folder, on_the_way)) is not None:
+                above[folder] = below
+                kept.append(d)
+        dirs[:] = kept
         for relfile in sorted(files):
             if Path(relfile).suffix in self.extensions_set:
                 yield Path(root, relfile)
@@ -4987,7 +5088,9 @@ def add_namespace_inits(search_path: Path, import_names: list[str], skip: list[s
     def shadowed(folder: Path, name: str) -> bool:  # a module of the same name wins over a namespace package
         return any(next(folder.glob(f"{name}{ext}"), None) for ext in (".py", ".pyi", ".*.so", ".*.pyd"))
 
-    def visit(folder: Path, module: str) -> None:
+    links = _FolderLinks()
+
+    def visit(folder: Path, module: str, above: frozenset[str]) -> None:
         for child in sorted(folder.iterdir()):
             name = child.name
             sub = f"{module}.{name}"
@@ -5000,17 +5103,20 @@ def add_namespace_inits(search_path: Path, import_names: list[str], skip: list[s
                 continue
             if sub in skipped or sub.startswith(tuple(s + "." for s in skipped)):
                 continue
+            below = links.below(str(child), above)
+            if below is None:
+                continue
             if not ((child / "__init__.py").exists() or (child / "__init__.pyi").exists()):
                 if shadowed(folder, name) or not holds_python(child):
                     continue
                 (child / "__init__.py").write_text("")
                 made.append(sub)
-            visit(child, sub)
+            visit(child, sub, below)
 
     for import_name in import_names:
         root = search_path.joinpath(*import_name.split("."))
         if root.is_dir() and import_name not in skipped:
-            visit(root, import_name)
+            visit(root, import_name, frozenset({os.path.realpath(root)}))
     return made
 
 

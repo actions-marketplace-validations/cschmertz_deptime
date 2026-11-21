@@ -15,10 +15,11 @@ RUN uv sync --locked --no-dev --no-install-project
 COPY src ./src
 RUN uv sync --locked --no-dev
 
+# Behind a proxy that appends X-Forwarded-For (or sets a client-IP header), also set DEPTIME_TRUST_PROXY_HEADERS=true
+# (fly.toml does): without one, a client could send any address in that header and dodge the per-IP rate limits.
 ENV DEPTIME_HOST=0.0.0.0 \
     DEPTIME_PORT=8080 \
-    DEPTIME_HOME=/data \
-    DEPTIME_TRUST_PROXY_HEADERS=true
+    DEPTIME_HOME=/data
 
 RUN mkdir -p /data && chown nobody /data
 EXPOSE 8080

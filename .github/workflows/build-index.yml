@@ -9,9 +9,9 @@ name: build-index
 #
 # One job per covered package builds that package's snapshots on its own runner, with its own snapshot cache and
 # log, so a heavy package can only fail itself (DT-DATA-03). The publish job then assembles the index from those
-# snapshots without downloading or analysing anything. It starts from the published index, so a package whose job
-# failed tonight keeps the releases it already had (DT-DATA-12), and a package whose snapshots and assembly code
-# haven't changed keeps its rows as they are (DT-DATA-41).
+# snapshots without downloading or analysing anything. It starts from the published index, verified (DT-OSS-21), so
+# a package whose job failed tonight keeps the releases it already had (DT-DATA-12), and a package whose snapshots
+# and assembly code haven't changed keeps its rows as they are (DT-DATA-41).
 on:
   schedule:
     - cron: "17 4,16 * * *" # 04:17 and 16:17 UTC
@@ -23,6 +23,12 @@ on:
         description: Publish the index to the rolling `index` release
         type: boolean
         default: true
+      fresh:
+        # The publish job starts from the published index, and stops when it can't install it (DT-OSS-21). The
+        # first build, and the first after an index schema change, have none it can read: they start from nothing.
+        description: Build from the snapshots alone, not from the published index (after a schema change)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -142,10 +148,14 @@ jobs:
           path: .deptime/build/snapshots
           merge-multiple: true
 
-      # Ingesting into last night's index keeps a release that has no snapshot tonight (DT-DATA-12).
-      # sha256 and schema are checked as for users.
+      # Ingesting into last night's index keeps a release that has no snapshot tonight (DT-DATA-12). It is
+      # installed only once its signed build provenance names this workflow on main (DT-OSS-21), as bench and
+      # pages check it: this job signs what it builds, so a file uploaded by hand would otherwise be signed too.
+      # A failed pull stops the run: from the snapshots alone, a release only the published index keeps would
+      # drop out, which the guard below, counting packages and releases, may not catch.
       - name: Start from the published index
-        run: uv run deptime index pull || echo "::notice::no compatible published index; building from snapshots only"
+        if: github.event_name != 'workflow_dispatch' || !inputs.fresh
+        run: uv run deptime index pull --verify
 
       - name: Assemble the index from the snapshots (never downloads or analyses a release)
         run: |
@@ -181,14 +191,16 @@ jobs:
       - name: Guard against publishing a shrunken index
         if: github.event_name != 'workflow_dispatch' || inputs.publish != false
         run: |
-          new=$(jq .packages dist/manifest.json)
           if gh release download index --pattern manifest.json --dir prev 2>/dev/null; then
-            old=$(jq .packages prev/manifest.json)
-            echo "packages: previous=$old new=$new"
-            if [ "$new" -lt $(( old * 9 / 10 )) ]; then
-              echo "::error::new index has $new packages vs $old published; refusing to publish"
-              exit 1
-            fi
+            for count in packages releases; do
+              new=$(jq ".$count" dist/manifest.json)
+              old=$(jq ".$count" prev/manifest.json)
+              echo "$count: previous=$old new=$new"
+              if [ "$new" -lt $(( old * 9 / 10 )) ]; then
+                echo "::error::new index has $new $count vs $old published; refusing to publish"
+                exit 1
+              fi
+            done
           fi
 
       # Signed SLSA build provenance for the three files (DT-OSS-09), checked by `deptime index pull --verify`

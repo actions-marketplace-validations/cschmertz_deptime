@@ -113,12 +113,14 @@ class Tree:
         return self._listing
 
     def read(self, rel: str) -> str | None:
+        """The file's text, without the byte-order mark some Windows editors write (DT-CORE-81): it would make a
+        requirements file's first line an invalid requirement."""
         if self.rev is None:
             path = self.root / rel
-            return path.read_text(encoding="utf-8", errors="replace") if path.is_file() else None
+            return path.read_text(encoding="utf-8-sig", errors="replace") if path.is_file() else None
         if rel not in self.files():
             return None
-        return self._git("show", f"{self.rev}:./{rel}")
+        return self._git("show", f"{self.rev}:./{rel}").removeprefix("\ufeff")
 
 
 def _skipped(directory: str) -> bool:
@@ -144,6 +146,15 @@ def _own_project(pkg: dict) -> bool:
     return isinstance(source, dict) and "." in (source.get("editable"), source.get("virtual"))
 
 
+def _shape(value: object, kind: type, where: str):
+    """`value` if it is a `kind` (a table or an array); else a ValueError that names the key, so a file shaped
+    unexpectedly is reported as not read rather than crashing the check (DT-CORE-80)."""
+    if not isinstance(value, kind):
+        what = "an array" if kind is list else "a table"
+        raise ValueError(f"{where} is a {type(value).__name__}, not {what}")
+    return value
+
+
 def _version(raw: str) -> str | None:
     try:
         return str(Version(raw))
@@ -154,7 +165,7 @@ def _version(raw: str) -> str | None:
 def _lock_pins(text: str) -> dict[str, str]:
     data = tomllib.loads(text)
     out = {}
-    for pkg in data.get("package", []):
+    for pkg in _shape(data.get("package", []), list, "[[package]]"):
         if not isinstance(pkg, dict) or not isinstance(pkg.get("name"), str) or _own_project(pkg):
             continue
         if isinstance(pkg.get("version"), str) and (v := _version(pkg["version"])) is not None:
@@ -216,23 +227,23 @@ def _requirements(tree: Tree, rel: str, seen: set[str]) -> dict[str, str]:
 def _pyproject_pins(text: str) -> dict[str, str]:
     data = tomllib.loads(text)
     lines: list[str] = []
-    project = data.get("project", {})
-    lines += project.get("dependencies", []) or []
-    for group in (project.get("optional-dependencies", {}) or {}).values():
-        lines += group or []
-    for group in (data.get("dependency-groups", {}) or {}).values():
-        lines += [x for x in group or [] if isinstance(x, str)]
+    project = _shape(data.get("project", {}), dict, "[project]")
+    lines += _shape(project.get("dependencies", []) or [], list, "project.dependencies")
+    optional = _shape(project.get("optional-dependencies", {}) or {}, dict, "project.optional-dependencies")
+    for key, group in optional.items():
+        lines += _shape(group or [], list, f"project.optional-dependencies.{key}")
+    for key, group in _shape(data.get("dependency-groups", {}) or {}, dict, "[dependency-groups]").items():
+        lines += [x for x in _shape(group or [], list, f"dependency-groups.{key}") if isinstance(x, str)]
     out: dict[str, str] = {}
     for line in lines:
         if isinstance(line, str) and (pin := _requirement_pin(line)) is not None:
             out.setdefault(*pin)
-    poetry = data.get("tool", {}).get("poetry", {})
+    poetry = _shape(_shape(data.get("tool", {}), dict, "[tool]").get("poetry", {}), dict, "[tool.poetry]")
     tables = [poetry.get("dependencies", {}), poetry.get("dev-dependencies", {})]
-    tables += [
-        g.get("dependencies", {}) for g in (poetry.get("group", {}) or {}).values() if isinstance(g, dict)
-    ]
+    groups = _shape(poetry.get("group", {}) or {}, dict, "tool.poetry.group")
+    tables += [g.get("dependencies", {}) for g in groups.values() if isinstance(g, dict)]
     for table in tables:
-        for name, spec in (table or {}).items():
+        for name, spec in _shape(table or {}, dict, "a [tool.poetry] dependencies table").items():
             if canonicalize_name(name) == "python":
                 continue
             raw = spec.get("version") if isinstance(spec, dict) else spec
@@ -250,7 +261,7 @@ def read_pins(root: Path, rev: str | None = None) -> Pins:
     for lock in locks:
         try:
             pins.by_file[lock] = _lock_pins(tree.read(lock) or "")
-        except (tomllib.TOMLDecodeError, OSError) as exc:
+        except (OSError, ValueError) as exc:  # a TOML error is a ValueError
             pins.problems.append(f"{lock}: {type(exc).__name__}: {exc}")
     reqs = sorted((f for f in files if _is_requirements(f)), key=lambda f: (f.count("/"), f))
     for rel in reqs:
@@ -264,7 +275,7 @@ def read_pins(root: Path, rev: str | None = None) -> Pins:
     if "pyproject.toml" in files:
         try:
             found = _pyproject_pins(tree.read("pyproject.toml") or "")
-        except (tomllib.TOMLDecodeError, OSError) as exc:
+        except (OSError, ValueError) as exc:
             pins.problems.append(f"pyproject.toml: {type(exc).__name__}: {exc}")
         else:
             if found:
@@ -276,11 +287,14 @@ def project_name(root: Path) -> str | None:
     """The project's own distribution name (`[project]` or `[tool.poetry]` in pyproject.toml): a lockfile lists it,
     and its version changing is no dependency update."""
     try:
-        data = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError):
+        data = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
         return None
-    name = data.get("project", {}).get("name") or data.get("tool", {}).get("poetry", {}).get("name")
-    return canonicalize_name(name) if isinstance(name, str) else None
+    tool = data.get("tool")
+    poetry = tool.get("poetry") if isinstance(tool, dict) else None
+    tables = [t for t in (data.get("project"), poetry) if isinstance(t, dict)]
+    name = next((t["name"] for t in tables if isinstance(t.get("name"), str) and t["name"]), None)
+    return canonicalize_name(name) if name else None
 
 
 def changes(base: Pins, head: Pins, packages: set[str] | None = None) -> list[Change]:

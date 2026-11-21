@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import tarfile
+import time
+import unicodedata
 import zipfile
 from collections import defaultdict
 from collections.abc import Iterable
@@ -30,6 +32,7 @@ SIMPLE_URL = "https://pypi.org/simple/{name}/"
 SIMPLE_ACCEPT = "application/vnd.pypi.simple.v1+json"
 USER_AGENT = f"deptime/{__version__} (+https://github.com/; API history indexer)"
 MAX_ARTIFACT_BYTES = 200 * 1024 * 1024
+RETRY_WAITS = (3, 15)  # seconds before each retry of a project page
 
 
 @dataclass(frozen=True)
@@ -102,8 +105,28 @@ def parse_simple_index(payload: dict) -> list[Release]:
     return sorted((Release(v, tuple(fs)) for v, fs in by_version.items()), key=lambda r: r.version)
 
 
+def _transient(exc: httpx.HTTPError) -> bool:
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code == 429 or exc.response.status_code >= 500
+    return isinstance(exc, httpx.TransportError)
+
+
 def fetch_releases(name: str, client: httpx.Client) -> list[Release]:
-    resp = client.get(SIMPLE_URL.format(name=canonicalize_name(name)), headers={"Accept": SIMPLE_ACCEPT})
+    """A project's releases from PyPI's JSON simple index. A network error, 429 or 5xx is retried after each of
+    `RETRY_WAITS` (DT-DATA-85): one 503 sent the package down the outage path, without PyPI's release list."""
+    url = SIMPLE_URL.format(name=canonicalize_name(name))
+    for wait in RETRY_WAITS:
+        try:
+            return _project_releases(url, client)
+        except httpx.HTTPError as exc:
+            if not _transient(exc):
+                raise
+        time.sleep(wait)
+    return _project_releases(url, client)
+
+
+def _project_releases(url: str, client: httpx.Client) -> list[Release]:
+    resp = client.get(url, headers={"Accept": SIMPLE_ACCEPT})
     resp.raise_for_status()
     return parse_simple_index(resp.json())
 
@@ -188,15 +211,27 @@ def extract(artifact: Path, dest: Path) -> Path:
     if artifact.suffix in {".whl", ".zip"}:
         with zipfile.ZipFile(artifact) as zf:
             root = dest.resolve()
-            for member in zf.infolist():
+            members = [m for m in zf.infolist() if _plain_name(m.filename)]
+            for member in members:
                 target = (dest / member.filename).resolve()
                 if not target.is_relative_to(root):  # zip-slip guard
-                    raise ValueError(f"unsafe path in {artifact.name}: {member.filename}")
-            zf.extractall(dest)
+                    raise ValueError(f"unsafe path in {artifact.name}: {member.filename!r}")
+            zf.extractall(dest, members)
     else:
         with tarfile.open(artifact) as tf:
-            tf.extractall(dest, filter="data")  # PEP 706 filter rejects traversal/links outside dest
+            tf.extractall(dest, filter=_data_filter)
     return _search_root(dest, artifact)
+
+
+def _plain_name(name: str) -> bool:
+    """A member name without control characters or line breaks (DT-DATA-85). No module's has one, and griffe's and
+    Python's warnings print file names to the build's log, where a line break could start a workflow command."""
+    return not any(unicodedata.category(ch) in {"Cc", "Zl", "Zp"} for ch in name)
+
+
+def _data_filter(member: tarfile.TarInfo, dest: str) -> tarfile.TarInfo | None:
+    """PEP 706's `data` filter (no paths or links leaving `dest`, no devices), skipping names `_plain_name` refuses."""
+    return tarfile.data_filter(member, dest) if _plain_name(member.name) else None
 
 
 def _search_root(dest: Path, artifact: Path) -> Path:

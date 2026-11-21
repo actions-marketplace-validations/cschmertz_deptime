@@ -594,3 +594,206 @@ def test_the_check_upgrade_tool_reads_up_to_its_limit(dt, monkeypatch):
     monkeypatch.setattr(query, "MAX_UPGRADE_CHARS", len(CODE) + 5)
     res = dt.check_upgrade("httpx", "0.27.2", "0.28.1", code=CODE, files={"b.py": CODE})
     assert res.files_read == 1 and res.breaks == 1 and "1 file left out" in res.note
+
+
+# ------------------------------------------------------------------------- a release the index doesn't have yet
+def test_an_update_to_a_release_the_index_doesnt_have_yet_is_not_checked(dt):
+    """DT-CORE-79: a Dependabot pull request opened before the twice-daily build has the new release. Answering for
+    the nearest indexed release compares the old version with itself, so the report must say the update wasn't
+    checked, never "No breaks found"."""
+    res = check_upgrade(dt, "proj", {"a.py": CODE}, [_change("0.28.1", "9.0.0")])
+    assert res.checked == [] and res.breaks == 0
+    assert [(c.package, c.to_version) for c in res.not_indexed] == [("httpx", "9.0.0")]
+    why = res.not_indexed[0].note
+    assert "9.0.0 isn't in DepTime's index yet" in why and "0.28.1" in why and "again later" in why
+    md = to_markdown(res)
+    assert "No breaks found" not in md and "nothing was checked" not in md
+    assert f"**Not checked:** httpx 0.28.1 → 9.0.0. {why}" in md
+    (line,) = upgrade.to_annotations(res).splitlines()
+    assert line.startswith("::warning title=DepTime%3A httpx 0.28.1 → 9.0.0 wasn't checked::")
+    # Older than the earliest indexed release: nothing to compare either.
+    old = check_upgrade(dt, "proj", {"a.py": CODE}, [_change("0.20.0", "0.21.0")])
+    assert old.checked == [] and [c.to_version for c in old.not_indexed] == ["0.21.0"]
+    assert "older than the earliest indexed release, 0.26.0" in old.not_indexed[0].note
+    # Back from a release the index doesn't have onto the one before it: the same release at both ends again.
+    down = check_upgrade(dt, "proj", {"a.py": CODE}, [_change("0.28.2", "0.28.1")])
+    assert down.checked == [] and "0.28.2 isn't indexed" in down.not_indexed[0].note
+    tool = dt.check_upgrade("httpx", "0.28.1", "9.0.0", code=CODE)
+    assert tool.checked == [] and "isn't in DepTime's index yet" in tool.not_indexed[0].note
+
+
+def test_an_update_past_the_index_is_checked_as_far_as_the_index_goes(dt):
+    """DT-CORE-79: from a release before the newest indexed one, the breaks up to it are real; the report says how
+    far the check got."""
+    res = check_upgrade(dt, "proj", {"a.py": CODE}, [_change("0.27.2", "9.0.0")])
+    (pkg,) = res.checked
+    assert res.breaks == 1 and pkg.resolved_version == "0.28.1" and pkg.newer_than_index
+    assert "httpx 0.27.2 → 9.0.0 (checked up to 0.28.1)" in to_markdown(res)
+    clean = check_upgrade(
+        dt, "proj", {"a.py": "import httpx\nhttpx.get('u')\n"}, [_change("0.27.2", "9.0.0")]
+    )
+    assert clean.breaks == 0 and clean.checked[0].newer_than_index
+    assert "**No breaks found** in this project's code: httpx 0.27.2 → 9.0.0 (checked up to 0.28.1)." in (
+        to_markdown(clean)
+    )
+    (line,) = upgrade.to_annotations(clean).splitlines()
+    assert line.startswith("::warning title=DepTime%3A httpx 0.27.2 → 9.0.0 was checked up to 0.28.1::")
+    exact = check_upgrade(dt, "proj", {"a.py": CODE}, [_change("0.27.2", "0.28.1")])
+    assert not exact.checked[0].newer_than_index and upgrade.to_annotations(exact).count("::warning") == 0
+
+
+def test_a_version_that_isnt_one_is_said_not_guessed(dt, tmp_path, settings, monkeypatch, capsys):
+    """DT-CORE-80: `>=0.27` isn't older than the earliest indexed release; a use failing there too isn't a break."""
+    res = dt.check_upgrade("httpx", ">=0.27", "0.28.1", code=CODE)
+    assert res.breaks == 0 and res.checked == [] and [c.from_version for c in res.skipped] == [">=0.27"]
+    assert "`>=0.27` isn't a version" in res.skipped[0].note
+    md = to_markdown(res)
+    assert "**Nothing was checked.**" in md and "isn't a version" in md and "No covered package" not in md
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "main.py").write_text(CODE)
+    args = ("--package", "httpx", "--to", "0.28.1")
+    assert _cli(monkeypatch, settings, str(proj), *args, "--from", "latest") == 2
+    assert (
+        _cli(monkeypatch, settings, str(proj), "--package", "httpx", "--from", "0.27.2", "--to", "0.28.x")
+        == 2
+    )
+    assert capsys.readouterr().err.count("isn't a version") == 2
+
+
+# --------------------------------------------------------------------------- exit 2: the check couldn't run
+def test_a_file_too_deep_for_the_reader_is_unreadable_not_a_crash(dt):
+    """DT-CORE-80: a 600-term `'a' + 'a' + ...` nests deeper than Python's recursion limit allows a visitor."""
+    deep = "import httpx\nx = " + " + ".join(["'a'"] * 600) + "\n"
+    assert snippet.uses_in(deep, ("httpx",), limit=None) is None
+    res = check_upgrade(dt, "p", {"deep.py": deep, "a.py": CODE}, [_change("0.27.2", "0.28.1")])
+    assert res.breaks == 1 and res.files_unreadable == ["deep.py"]
+    assert "nothing was read" in dt.check_symbols("httpx", "0.28.1", code=deep).note
+
+
+def _project(tmp_path, pins: str = "httpx==0.27.2\n"):
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "main.py").write_text(CODE)
+    (proj / "requirements.txt").write_text(pins)
+    return proj
+
+
+def test_a_crash_exits_2_not_1_which_means_a_break(tmp_path, settings, monkeypatch, capsys):
+    """DT-CORE-80: exit 1 is a confirmed break, and the Action reads it as one; anything unexpected is exit 2, with
+    the reason in a line and no traceback (Invariant 8)."""
+    proj = _project(tmp_path)
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("reader fell over")
+
+    monkeypatch.setattr(upgrade, "check_upgrade", boom)
+    assert _cli(monkeypatch, settings, str(proj), "--package", "httpx", "--to", "0.28.1") == 2
+    err = capsys.readouterr().err
+    assert "couldn't run" in err and "RuntimeError: reader fell over" in err and "Traceback" not in err
+
+
+def test_no_index_exits_2_rather_than_calling_every_package_not_covered(
+    tmp_path, settings, monkeypatch, capsys
+):
+    """DT-CORE-80: a failed download (or offline with no index) can't check anything."""
+    import dataclasses
+
+    empty = dataclasses.replace(settings, index_path=tmp_path / "none" / "index.sqlite")
+    proj = _project(tmp_path)
+    assert _cli(monkeypatch, empty, str(proj), "--package", "httpx", "--to", "0.28.1") == 2
+    assert "no index" in capsys.readouterr().err
+    # A change DepTime doesn't cover needs no index.
+    args = ("--package", "left-pad", "--from", "1.0", "--to", "2.0")
+    assert _cli(monkeypatch, empty, str(proj), *args) == 0
+
+
+def _git(proj, *args: str) -> None:
+    git = ["git", "-C", str(proj), "-c", "user.email=t@example.invalid", "-c", "user.name=t"]
+    subprocess.run([*git, *args], check=True)
+
+
+def test_a_pin_file_that_cant_be_read_exits_2_and_the_report_says_so(tmp_path, settings, monkeypatch, capsys):
+    """DT-CORE-80: a lockfile with merge-conflict markers hides every update in it; the CHANGELOG promises exit 2."""
+    lock = 'version = 1\n\n[[package]]\nname = "httpx"\nversion = "{}"\n'
+    proj = _project(tmp_path)
+    (proj / "uv.lock").write_text(lock.format("0.27.2"))
+    _git(proj, "init", "-q")
+    _git(proj, "add", "-A")
+    _git(proj, "commit", "-qm", "base")
+    (proj / "uv.lock").write_text("<<<<<<< HEAD\n" + lock.format("0.28.1") + "=======\n>>>>>>> other\n")
+    out = tmp_path / "r.json"
+    assert _cli(monkeypatch, settings, str(proj), "--format", "json", "--output", str(out)) == 2
+    data = json.loads(out.read_text())
+    assert data["breaks"] == 0 and data["pins_unread"][0].startswith("uv.lock: TOMLDecodeError")
+    assert _cli(monkeypatch, settings, str(proj)) == 2
+    md = capsys.readouterr().out
+    assert "**Not read:** `uv.lock`" in md and "nothing was checked" not in md
+    # A confirmed break elsewhere is still exit 1.
+    (proj / "requirements.txt").write_text("httpx==0.28.1\n")
+    assert _cli(monkeypatch, settings, str(proj)) == 1
+
+
+def test_suppressions_that_arent_tables_are_reported_not_a_crash(tmp_path, capsys):
+    """DT-CORE-80: `[tool] deptime = "off"` raised AttributeError, which also stopped `deptime mcp` at start-up."""
+    from deptime import suppressions
+
+    pyproject = tmp_path / "pyproject.toml"
+    for text in ('[tool]\ndeptime = "off"\n', 'tool = "x"\n', '[tool.deptime]\nsuppress = "all"\n'):
+        pyproject.write_text(text)
+        assert suppressions.load(tmp_path) == ()
+    pyproject.write_bytes(b'[project]\nname = "caf\xe9"\n')  # not UTF-8
+    assert suppressions.load(tmp_path) == ()
+    assert capsys.readouterr().err.count("suppressions not read") == 4
+    pyproject.write_bytes(b'\xef\xbb\xbf[[tool.deptime.suppress]]\npackage = "httpx"\n')  # a BOM is fine
+    assert suppressions.load(tmp_path) == (Suppression("httpx"),)
+
+
+# ------------------------------------------------------------------------------------ files read in full
+def test_a_file_that_starts_with_a_byte_order_mark_is_read(tmp_path, dt):
+    """DT-CORE-81: `ast.parse` rejects a BOM, so a Windows editor's file was skipped and the break went unseen."""
+    (tmp_path / "a.py").write_bytes(b"\xef\xbb\xbf" + CODE.encode())
+    res = check_upgrade(dt, "p", upgrade.read_code(tmp_path, ["a.py"]), [_change("0.27.2", "0.28.1")])
+    assert res.breaks == 1 and res.files_unreadable == []
+    assert snippet.uses_in("﻿" + CODE, ("httpx",)) is not None  # code passed to the tools too
+
+
+def test_files_too_large_to_read_are_counted(tmp_path, settings, monkeypatch):
+    """DT-CORE-81: a file over the size limit was skipped without a word."""
+    monkeypatch.setattr(upgrade, "MAX_FILE_BYTES", 400)
+    proj = _project(tmp_path)
+    (proj / "big.py").write_text("import httpx\n" + "x = 1\n" * 100)
+    out = tmp_path / "r.json"
+    args = ("--package", "httpx", "--to", "0.28.1", "--format", "json", "--output", str(out))
+    assert _cli(monkeypatch, settings, str(proj), *args) == 1
+    data = json.loads(out.read_text())
+    assert data["files_unreadable"] == ["big.py"] and data["files_read"] == 1
+    assert "1 Python file wasn't read" in data["note"]
+
+
+def test_a_distribution_that_installs_a_covered_package_is_checked_as_it(store, coverage):
+    """DT-CORE-82: `installed_as` (pydantic-ai is pydantic-ai-slim's code) was read as not covered."""
+    import dataclasses
+
+    from packaging.requirements import Requirement
+
+    from deptime.config import PackageSpec
+
+    spec = PackageSpec(
+        name="httpx", import_names=("httpx",), tier="B", installed_as=(Requirement("httpx-slim<1"),)
+    )
+    dt = DepTime(store, dataclasses.replace(coverage, packages=(spec,)))
+    res = check_upgrade(dt, "p", {"a.py": CODE}, [_change("0.27.2", "0.28.1", "httpx-slim")])
+    (pkg,) = res.checked
+    assert res.breaks == 1 and pkg.change.package == "httpx-slim" and not res.not_covered
+    assert "httpx-slim 0.28.1 is read as httpx 0.28.1" in pkg.note
+    # Both in one lockfile (uv.lock lists the meta-package and the code): the code is checked once.
+    both = [_change("0.27.2", "0.28.1", "httpx-slim"), _change("0.27.2", "0.28.1")]
+    res = check_upgrade(dt, "p", {"a.py": CODE}, both)
+    assert [p.change.package for p in res.checked] == ["httpx"] and res.breaks == 1 and not res.not_covered
+    # Outside the range it names, it's another distribution.
+    res = check_upgrade(dt, "p", {"a.py": CODE}, [_change("0.27.2", "1.0.0", "httpx-slim")])
+    assert res.not_covered and not res.checked
+    # A suppression may name either.
+    dt.suppressions = (Suppression("httpx-slim", "httpx.Client"),)
+    assert check_upgrade(dt, "p", {"a.py": CODE}, [_change("0.27.2", "0.28.1", "httpx-slim")]).breaks == 0
