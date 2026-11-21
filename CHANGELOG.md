@@ -61,6 +61,11 @@ are data: they can grow in any release.)
 
 ## [Unreleased]
 
+### Security
+- A release reaches PyPI only from a `v*` tag on `main`: the publishing environment accepts only `v*` tags, and
+  the job checks that the tagged commit is on `main`. `main` and release tags can't be force-pushed or deleted
+  (DT-OSS-22).
+
 ## [1.1.2] - 2026-11-21
 
 ### Added

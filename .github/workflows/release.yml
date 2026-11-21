@@ -1,6 +1,7 @@
 name: release
 
-# Publishes to PyPI, then to the official MCP Registry, when a version tag is pushed (git tag v0.1.0 && git push --tags).
+# Publishes to PyPI, then to the official MCP Registry, when a version tag on main is pushed
+# (git tag v0.1.0 && git push --atomic origin main v0.1.0).
 # One-time setup: on pypi.org, add a "trusted publisher" for this repo + workflow + environment `pypi`.
 on:
   push:
@@ -17,6 +18,17 @@ jobs:
       id-token: write # PyPI trusted publishing (no API token stored anywhere)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # main's history, for the check below
+          filter: blob:none # commits only; files are fetched for the checkout alone
+      # The `pypi` environment accepts only `v*` tags, but a tag can name a commit on any branch. Push main first
+      # (or both at once: git push --atomic origin main vX.Y.Z).
+      - name: Check the tagged commit is on main
+        run: |
+          if ! git merge-base --is-ancestor HEAD origin/main; then
+            echo "::error::$GITHUB_REF_NAME names $(git rev-parse HEAD), which isn't on main"
+            exit 1
+          fi
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
       # A PyPI version can never be reused, so refuse to publish when the tag and the package disagree.
       - name: Check the tag matches the package version

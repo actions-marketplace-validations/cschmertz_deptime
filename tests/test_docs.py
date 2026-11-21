@@ -58,3 +58,14 @@ def test_every_workflow_installs_the_index_only_once_its_provenance_is_verified(
                 pulls.append(path.name)
                 assert "--verify" in line and "||" not in line, f"{path.name}: {line.strip()}"
     assert {"bench.yml", "build-index.yml", "pages.yml"} <= set(pulls)
+
+
+def test_a_release_publishes_only_a_tagged_commit_on_main():
+    """G1: the `pypi` environment accepts only `v*` tags (a repository setting), but a tag can name a commit on any
+    branch, so the publishing job checks that the tagged commit is on `main` before it builds anything."""
+    workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    pypi = workflow.split("\n  pypi:\n", 1)[1].split("\n  mcp-registry:\n", 1)[0]
+    assert "environment: pypi" in pypi
+    assert "fetch-depth: 0" in pypi, "the check needs main's history"
+    check = re.search(r"git merge-base --is-ancestor \S+ origin/main", pypi)
+    assert check and check.start() < pypi.index("uv build") < pypi.index("pypa/gh-action-pypi-publish")

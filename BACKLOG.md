@@ -25,7 +25,7 @@ which of a project's code a dependency update breaks. Everything done before 202
   51.4 MB and the `.gz` 79.2 MB. `build-index` runs at 04:17 and 16:17 UTC, replaces the rolling `index` release and
   signs it. A build with no extraction change usually takes under 20 minutes; a `SNAPSHOT_FORMAT` bump means one cold
   build of about 3 hours (format 27's: 2 h 48 min).
-- **Checks that run without anyone:** `ci` on every push (675 offline tests), and `bench` on every code change and
+- **Checks that run without anyone:** `ci` on every push (676 offline tests), and `bench` on every code change and
   every published index. `bench` fails on a benchmark drop of more than 2 points, a traceback case that passed in the
   baseline and fails now, or a false-positive rate up by more than 1, and on the published index itself (`tests/test_golden.py`, DT-QA-03): older than 48 h, a package's newest
   release on PyPI for more than 24 h without being indexed, or a Tier A package's newest release without the names
@@ -158,6 +158,9 @@ in-sample run flags 0 of 3,291 working uses and fails no pull request without a 
 - [x] **DT-DATA-85** (2026-11-21): ingestion: snapshots saved atomically, a damaged one is a cache miss; a PyPI
   outage rebuilds only the indexed releases, after retries; folder-link loops and backslash runs no longer hang a
   build; exception text stays on one log line. Snapshots are unchanged, so no `SNAPSHOT_FORMAT` bump.
+- [x] **DT-OSS-22** (2026-11-21): a release reaches PyPI only from a `v*` tag on `main` (the `pypi` environment's
+  tag rule and a check in the job); rulesets stop `main` and `v*` tags being force-pushed or deleted. No required
+  reviewer, so releases stay hands-off.
 
 **Phase 4, the fix (the model's part, outside DepTime): done.** DT-QA-27 met its bar on broken updates nobody had
 seen (`bench/agent-fix/qa27/results-2026-11-17.md`). Held from it: DepTime doesn't check a pydantic model's required
