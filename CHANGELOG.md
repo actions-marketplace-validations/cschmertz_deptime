@@ -61,6 +61,8 @@ are data: they can grow in any release.)
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-21
+
 ### Added
 - The upgrade check says when it didn't check an update because the index doesn't have the new release yet, instead
   of passing it with "No breaks found": a Dependabot pull request opened before the twice-daily build compared the
@@ -678,7 +680,9 @@ A documentation release: the code is 0.1.13's, and every answer is the same.
 - The prebuilt index of 52 packages, downloaded on first run and refreshed daily; `deptime index pull|status|pack`;
   offline mode (`DEPTIME_OFFLINE=1`).
 
-[Unreleased]: https://github.com/cschmertz/deptime/compare/v1.0.2...HEAD
+[Unreleased]: https://github.com/cschmertz/deptime/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/cschmertz/deptime/compare/v1.0.3...v1.1.0
+[1.0.3]: https://github.com/cschmertz/deptime/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/cschmertz/deptime/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/cschmertz/deptime/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/cschmertz/deptime/compare/v0.2.3...v1.0.0
