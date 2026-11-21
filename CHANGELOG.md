@@ -61,6 +61,12 @@ are data: they can grow in any release.)
 
 ## [Unreleased]
 
+### Added
+- Migration hints for the rest of the MCP Python SDK 2.0's removed names, from its migration guide: the
+  `ClientNotificationType`, `ClientResultType` and `ServerRequestType` aliases → the bare `ClientNotification`,
+  `ClientResult` and `ServerRequest`, `RequestParams.Meta` → `RequestParamsMeta`, the `mcp.server.fastmcp` module →
+  `mcp.server.mcpserver`, `FastMCPError` → `MCPServerError`, and `Context.fastmcp` → `Context.mcp_server` (#49).
+
 ## [1.1.1] - 2026-11-21
 
 ### Fixed
