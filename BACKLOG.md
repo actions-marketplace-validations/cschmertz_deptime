@@ -185,6 +185,8 @@ in-sample run flags 0 of 3,291 working uses and fails no pull request without a 
   the same on every Python; one only some versions have is `unknown` with the versions (`stdlib_members.txt`).
 - [x] **DT-OSS-24** (2026-11-22, audit G6/G7/G9): the Dockerfile pins its base images by digest (Dependabot moves
   them); the README no longer implies DepTime checks the signature; AGENTS.md agrees with CHANGELOG on descriptions.
+- [x] **DT-OSS-25** (2026-11-22, PR #72 by flipcyde101, audit G8): CI runs once per change: every branch on push,
+  not tags; a pull request's own run only for forks.
 
 **Phase 4, the fix (the model's part, outside DepTime): done.** DT-QA-27 met its bar on broken updates nobody had
 seen (`bench/agent-fix/qa27/results-2026-11-17.md`). Held from it: DepTime doesn't check a pydantic model's required
