@@ -61,6 +61,10 @@ are data: they can grow in any release.)
 
 ## [Unreleased]
 
+### Changed
+- The Docker image's two base images (Python and uv) are pinned by digest, and Dependabot updates the pins
+  weekly (DT-OSS-24).
+
 ## [1.1.6] - 2026-11-22
 
 ### Added

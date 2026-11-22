@@ -1,6 +1,7 @@
-# Weekly update PRs for the locked Python dependencies (uv.lock) and the SHA-pinned GitHub Actions (DT-OSS-07).
-# Each ecosystem's minor and patch updates arrive as one PR; a major update gets a PR of its own, except where
-# a group below says otherwise.
+# Weekly update PRs for the locked Python dependencies (uv.lock), the SHA-pinned GitHub Actions (DT-OSS-07) and the
+# Dockerfile's digest-pinned base images (DT-OSS-24).
+# Each ecosystem's minor and patch updates arrive as one PR (each Docker image in its own); a major update gets a PR
+# of its own, except where a group below says otherwise.
 # A uv.lock change runs ci (tests and pip-audit) and bench (the benchmark against the published index).
 version: 2
 updates:
@@ -28,3 +29,10 @@ updates:
         patterns: [actions/upload-artifact, actions/download-artifact]
       actions-minor-and-patch:
         update-types: [minor, patch]
+
+  # The optional hosted mode's image (docs/05). Nothing in CI builds it: a digest-only PR is a patched base image, but
+  # build the image locally before merging one that changes a tag (a newer Python or uv).
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly

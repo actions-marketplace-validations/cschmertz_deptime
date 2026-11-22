@@ -183,6 +183,8 @@ in-sample run flags 0 of 3,291 working uses and fails no pull request without a 
   when `PKG-INFO` is at the root.
 - [x] **DT-CORE-92** (2026-11-22, audit F2): `check_symbols` answers a name inherited from a standard-library class
   the same on every Python; one only some versions have is `unknown` with the versions (`stdlib_members.txt`).
+- [x] **DT-OSS-24** (2026-11-22, audit G6/G7/G9): the Dockerfile pins its base images by digest (Dependabot moves
+  them); the README no longer implies DepTime checks the signature; AGENTS.md agrees with CHANGELOG on descriptions.
 
 **Phase 4, the fix (the model's part, outside DepTime): done.** DT-QA-27 met its bar on broken updates nobody had
 seen (`bench/agent-fix/qa27/results-2026-11-17.md`). Held from it: DepTime doesn't check a pydantic model's required
