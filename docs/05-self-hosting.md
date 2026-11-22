@@ -12,6 +12,8 @@ DepTime is local-first. `uvx deptime mcp` runs on your machine, downloads one pr
 
 `deptime serve` exposes MCP at `/mcp` (stateless, spec 2026-07-28) plus `/v1/*` and `/healthz`, downloads the index in the background, and applies anonymous per-IP rate limits. When a limit is hit, the message points people to unlimited local use. Settings are listed in [`.env.example`](../.env.example).
 
+`/v1/<tool>` takes a GET with no arguments, or a POST with a JSON object of up to 4 MiB sent as `Content-Type: application/json`. When `DEPTIME_HOST` is loopback (the default, `127.0.0.1`), every route answers only requests addressed to `127.0.0.1`, `localhost` or `[::1]` with a port, and refuses another site's `Origin`, so a web page you visit can't use your local server.
+
 ## Deployment notes
 
 The server is a stateless Python container, so any container host works. The repo includes a `Dockerfile` and a `fly.toml`.

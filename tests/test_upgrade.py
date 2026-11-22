@@ -114,6 +114,39 @@ def test_the_module_of_a_from_import_and_a_namespace_package_are_read():
     assert "google" not in uses.paths and "google.genai.genai" not in uses.paths
 
 
+def test_import_of_a_submodule_binds_the_namespace_but_only_its_own_chains_are_read():
+    # DT-CORE-85: `import google.genai` binds `google`, but `google.auth.default()` is google-auth's, not
+    # google-genai's (it was checked as `google.genai.google.auth.default` and reported missing).
+    code = (
+        "import google.genai\nimport google.auth\n"
+        "creds, _ = google.auth.default()\ntoken = google.oauth2.Token()\ntoken.refresh()\n"
+        "c = google.genai.Client(api_key='k')\nc.models\ng = google\ng.genai.types\ng.cloud.storage\n"
+        "with google.api_core.Thing() as t:\n    t.run()\n"
+    )
+    uses = snippet.uses_in(code, ("google.genai",))
+    assert uses is not None
+    assert set(uses.paths) == {"google.genai", "google.genai.Client", "google.genai.types"}
+    assert set(uses.members) == {("google.genai.Client", "models")}
+    # llama-index-core owns `llama_index.core`, not the other llama-index-* distributions under `llama_index`
+    code = "import llama_index.core\nimport llama_index.llms.openai\nllama_index.llms.openai.OpenAI()\n"
+    uses = snippet.uses_in(code + "llama_index.core.Settings\n", ("llama_index.core",))
+    assert uses is not None and set(uses.paths) == {"llama_index.core", "llama_index.core.Settings"}
+    # pytest's index covers `_pytest.hookspec`, not the rest of `_pytest`
+    code = (
+        "import pytest\nimport _pytest.hookspec\n_pytest.config.Config\n_pytest.hookspec.pytest_addoption\n"
+    )
+    uses = snippet.uses_in(code, ("pytest", "_pytest.hookspec"))
+    assert uses is not None
+    assert set(uses.paths) == {"pytest", "_pytest.hookspec", "_pytest.hookspec.pytest_addoption"}
+
+
+def test_check_symbols_reads_no_other_distribution_from_a_shared_namespace(dt):
+    # DT-CORE-85: the same through the tool (google-genai is covered, not indexed, in the test index)
+    code = "import google.genai\ngoogle.auth.default()\ngoogle.genai.Client()\n"
+    res = dt.check_symbols("google-genai", "1.0", code=code)
+    assert [r.path for r in res.results] == ["google.genai", "google.genai.Client"]
+
+
 def test_members_used_through_a_removed_class_are_each_reported(coverage):
     # DT-CORE-69: the class is gone, and so is each method the project calls on what it built, at its own line.
     def snap(version: str, legacy: bool) -> ApiSnapshot:

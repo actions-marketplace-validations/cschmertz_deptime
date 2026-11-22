@@ -67,7 +67,9 @@ Deprecation messages come from third-party source. A malicious or compromised pa
   - freeze: 100K chars, 5K lines;
   - symbols: 100;
   - `used_symbols`: 500;
-  - `limit`: 500.
+  - `limit`: 500;
+  - a JSON API body: 4 MiB, the same cap as `/mcp`, and only as `application/json`; a tool call runs in a worker thread, so a slow one doesn't hold up other requests (DT-HOST-07).
+- **On loopback,** `/v1/*` and `/healthz` check Host and Origin as the MCP transport does for `/mcp`, so a web page can't reach a developer's local `deptime serve` (DT-HOST-07).
 - **Per-IP anonymous limits** are in place. Add a proxy-level burst limit and MCP transport allowed-host/origin settings for the public hostname (DT-HOST-02).
 
 ## Secrets and supply chain
