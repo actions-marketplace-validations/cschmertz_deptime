@@ -61,6 +61,8 @@ are data: they can grow in any release.)
 
 ## [Unreleased]
 
+## [1.1.5] - 2026-11-22
+
 ### Fixed
 - `deptime explain --installed` with an item that isn't `PKG==VER` prints the usage and what's wrong, exit 2,
   instead of a traceback (DT-CORE-87, #58).
@@ -790,7 +792,8 @@ A documentation release: the code is 0.1.13's, and every answer is the same.
 - The prebuilt index of 52 packages, downloaded on first run and refreshed daily; `deptime index pull|status|pack`;
   offline mode (`DEPTIME_OFFLINE=1`).
 
-[Unreleased]: https://github.com/cschmertz/deptime/compare/v1.1.4...HEAD
+[Unreleased]: https://github.com/cschmertz/deptime/compare/v1.1.5...HEAD
+[1.1.5]: https://github.com/cschmertz/deptime/compare/v1.1.4...v1.1.5
 [1.1.4]: https://github.com/cschmertz/deptime/compare/v1.1.3...v1.1.4
 [1.1.3]: https://github.com/cschmertz/deptime/compare/v1.1.2...v1.1.3
 [1.1.2]: https://github.com/cschmertz/deptime/compare/v1.1.1...v1.1.2

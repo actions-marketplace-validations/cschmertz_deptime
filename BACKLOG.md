@@ -16,7 +16,7 @@ which of a project's code a dependency update breaks. Everything done before 202
 
 ---
 
-## Current state: stable, v1.1.4
+## Current state: stable, v1.1.5
 
 - **Released:** 1.1.3 (2026-11-21) is on PyPI, the MCP Registry and GitHub: the six tools, the upgrade check (a
   command, a GitHub Action, an MCP tool and a Claude Code plugin command), and the 1.x promise in CHANGELOG.md's
