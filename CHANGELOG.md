@@ -64,6 +64,16 @@ are data: they can grow in any release.)
 ### Fixed
 - `deptime explain --installed` with an item that isn't `PKG==VER` prints the usage and what's wrong, exit 2,
   instead of a traceback (DT-CORE-87, #58).
+- `diff_versions` with `from_version` later than `to_version` returns a note saying the range is reversed,
+  instead of no events, which read as "nothing changed" (DT-CORE-88, #59).
+- `check-upgrade` keeps the first pin when a requirements file pins a package twice, as for `pyproject.toml`, so an
+  update to that line is checked (DT-CORE-89, #60).
+- `check_symbols(code=...)` from Python with code over 100,000 characters says it's too long and reads nothing,
+  instead of "doesn't parse" (DT-CORE-90, #61).
+- `check-upgrade` no longer follows an absolute `-r` include out of the project, whose pins looked newly added and
+  went unchecked (DT-CORE-91, #62).
+- The tests in the source distribution pass: those that need files it leaves out (`bench/`, `action.yml`,
+  `.github/workflows/`, `docs/assets/`) are skipped there (DT-OSS-23, #63).
 
 ## [1.1.4] - 2026-11-21
 
