@@ -67,6 +67,13 @@ are data: they can grow in any release.)
   `ActionRequest` → `InterruptOnConfig`, and `HumanInterrupt` → `HITLRequest`, both in
   `langchain.agents.middleware.human_in_the_loop` (#66).
 
+### Fixed
+- `check_symbols` gives the same answer on every Python for a name a class inherits from the standard library. It
+  used to ask the Python running DepTime, so django's `SimpleTestCase.assertStartsWith` (unittest's, added in 3.14)
+  was `missing` on 3.12 and `present` on 3.14. A member only some Python versions have is now `unknown`, with those
+  versions in `hint`, and so is a name under a base class a Python from 3.12 on lacks; the versions come from a new
+  table built from typeshed's stubs and CPython 3.9 to 3.15 (DT-CORE-92).
+
 ## [1.1.5] - 2026-11-22
 
 ### Fixed

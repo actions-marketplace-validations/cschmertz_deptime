@@ -3,6 +3,7 @@ from datetime import date
 
 from packaging.requirements import Requirement
 
+from deptime import stdlib
 from deptime.config import Coverage, PackageSpec, VersionPolicy, load_coverage
 from deptime.index.store import IndexStore
 from deptime.ingest.curated import CuratedHint
@@ -730,9 +731,24 @@ def test_a_typing_extensions_base_is_read_as_typing():
     assert _stdlib_member("typing_extensions.Buffer", "x") is None  # `typing` has no `Buffer`
 
 
+def test_a_standard_member_that_comes_and_goes_is_unknown_on_every_python():
+    # DT-CORE-92 (audit F2): `_stdlib_member` asked the running Python, so django's `SimpleTestCase.assertStartsWith`
+    # (unittest's, from 3.14) was missing on 3.12 and present on 3.14. Now it's the table's entry on both.
+    starts = _stdlib_member("unittest.TestCase", "assertStartsWith")
+    assert starts == stdlib.lookup_member("unittest.TestCase", "assertStartsWith")
+    assert _stdlib_member("unittest.case.TestCase", "assertEquals").versions == "3.11 and earlier"
+    assert _stdlib_member("unittest.TestCase", "assertEqual") is True
+    assert _stdlib_member("unittest.TestCase", "nope") is False
+    # A base the library writes as a bare builtin is looked up the same way.
+    assert _stdlib_member("memoryview", "count").versions == "3.14 and later"
+    # A base class that some Python DepTime runs on lacks: unknown on all of them, not read where it's there.
+    assert _stdlib_member("asyncio.AbstractChildWatcher", "close").versions == "3.13 and earlier"
+
+
 def _format19_stores() -> DepTime:
     """`web` 1.0 (own members; requires `base-dist>=1` and `web-extra`): `App` inherits from `base_dist.core.Base`
     (covered), `Color` from `enum.Enum`, `Far` from `faraway.Thing` (not covered), `Plain` from nothing outside;
+    `Case` from `unittest.TestCase`, `Watcher` from `asyncio.AbstractChildWatcher` (gone in 3.14),
     `Configure.Generative` is the class `web.Inner`; `web` is a namespace package. `base-dist` 1.0 has `Base.mount`."""
 
     def rec(path: str, kind: str, canonical: str | None = None) -> SymbolRecord:
@@ -743,6 +759,8 @@ def _format19_stores() -> DepTime:
     classes = {
         "web.App": ClassRecord("web.App", [], external=["base_dist.core.Base"]),
         "web.Color": ClassRecord("web.Color", [], external=["enum.Enum"]),
+        "web.Case": ClassRecord("web.Case", [], external=["unittest.TestCase"]),
+        "web.Watcher": ClassRecord("web.Watcher", [], external=["asyncio.AbstractChildWatcher"]),
         "web.Far": ClassRecord("web.Far", [], external=["faraway.Thing"]),
         "web.Plain": ClassRecord("web.Plain", []),
         "web.Configure": ClassRecord(
@@ -799,6 +817,23 @@ def test_check_symbols_looks_in_bases_from_other_distributions_and_namespaces():
     color = ask("web.Color.value")
     assert (color.status, color.hint) == ("present", "inherited from `enum.Enum`, in the standard library")
     assert ask("web.Color.nothing").status == "missing"
+    # A member the standard base has on some Pythons only (DT-CORE-92): unknown, with the versions, wherever it runs.
+    starts = ask("web.Case.assertStartsWith")
+    assert (starts.status, starts.hint) == (
+        "unknown",
+        "inherited from `unittest.TestCase` only on Python 3.14 and later (typeshed's stubs and CPython), and"
+        " check_symbols isn't told which Python runs the code",
+    )
+    assert ask("web.Case.assertEquals").hint.startswith(
+        "inherited from `unittest.TestCase` only on Python 3.11 and"
+    )
+    assert ask("web.Case.assertEqual").status == "present"
+    watcher = ask("web.Watcher.close")
+    assert (watcher.status, watcher.hint) == (
+        "unknown",
+        "web.Watcher inherits from `asyncio.AbstractChildWatcher`, which only Python 3.13 and earlier has (typeshed's"
+        " stubs and CPython), and check_symbols isn't told which Python runs the code",
+    )
     far = ask("web.Far.anything")
     assert far.status == "unknown" and "`faraway.Thing`" in far.hint
     assert ask("web.Plain.nothing").status == "missing"

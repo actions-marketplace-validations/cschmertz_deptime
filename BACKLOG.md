@@ -181,6 +181,8 @@ in-sample run flags 0 of 3,291 working uses and fails no pull request without a 
 - [x] **DT-CORE-91** (2026-11-22, PR #62 by Burakceliks): an absolute `-r` include is skipped like a `..` one.
 - [x] **DT-OSS-23** (2026-11-22, PR #63 by Burakceliks + follow-up): the sdist's tests pass; repo-only ones skip
   when `PKG-INFO` is at the root.
+- [x] **DT-CORE-92** (2026-11-22, audit F2): `check_symbols` answers a name inherited from a standard-library class
+  the same on every Python; one only some versions have is `unknown` with the versions (`stdlib_members.txt`).
 
 **Phase 4, the fix (the model's part, outside DepTime): done.** DT-QA-27 met its bar on broken updates nobody had
 seen (`bench/agent-fix/qa27/results-2026-11-17.md`). Held from it: DepTime doesn't check a pydantic model's required

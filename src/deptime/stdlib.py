@@ -1,9 +1,10 @@
-"""Which standard-library modules each Python version has, from typeshed's stdlib/VERSIONS (DT-DATA-06), and the
-names inside them whose presence changes between Python 3.9 and 3.15, from typeshed's stubs (DT-DATA-47).
+"""Which standard-library modules each Python version has, from typeshed's stdlib/VERSIONS (DT-DATA-06), the
+names inside them whose presence changes between Python 3.9 and 3.15, from typeshed's stubs (DT-DATA-47), and the
+members of their classes that do (DT-CORE-92), from the stubs and CPython.
 
 `No module named 'distutils'` on Python 3.12 is a version change like a library's, but the index only holds
-distributions from PyPI. Both tables ship with deptime (`stdlib_versions.txt`, `stdlib_names.txt`, built by
-tools/stdlib_names.py) and are read at query time.
+distributions from PyPI. The tables ship with deptime (`stdlib_versions.txt`; `stdlib_names.txt`, built by
+tools/stdlib_names.py; `stdlib_members.txt`, built by tools/stdlib_members.py) and are read at query time.
 """
 
 from __future__ import annotations
@@ -20,6 +21,9 @@ LINE_RE = re.compile(r"^(?P<module>[A-Za-z_][\w.]*):\s*3\.(?P<first>\d+)-(?:3\.(
 VERSION_RE = re.compile(r"^\s*v?3\.(?P<minor>\d{1,2})(?!\d)")
 # The names table covers these minor versions: 3.9 from an older typeshed commit, 3.10-3.15 from the current one.
 NAMES_FIRST, NAMES_LAST = 9, 15
+MEMBER_LINE_RE = re.compile(
+    r"^(?P<cls>[A-Za-z_][\w.]*) (?P<name>[A-Za-z_]\w*|\*) (?P<ranges>\d+-\d*(?:,\d+-\d*)*)$"
+)
 NAME_LINE_RE = re.compile(
     r"^(?P<module>[A-Za-z_][\w.]*) (?P<name>[A-Za-z_]\w*) (?P<ranges>\d+-\d*(?:,\d+-\d*)*)"
     r"(?: (?P<moved>[A-Za-z_][\w.]*))?$"
@@ -96,6 +100,61 @@ class StdlibName:
     def first_after(self, minor: int) -> int | None:
         """The first minor version after `minor` that has it."""
         return min((max(a, minor + 1) for a, b in self.ranges if b is None or b > minor), default=None)
+
+
+def _runs(text: str) -> tuple[tuple[int, int | None], ...]:
+    """`9-11,14-` -> ((9, 11), (14, None))."""
+    out = []
+    for run in text.split(","):
+        first, _, last = run.partition("-")
+        out.append((int(first), int(last) if last else None))
+    return tuple(out)
+
+
+@dataclass(frozen=True)
+class StdlibMember:
+    cls: str  # a public path of the class: `unittest.TestCase`, `builtins.memoryview`
+    name: str  # `*`: the class itself, which a Python DepTime runs on lacks
+    # The minor versions of 3.x whose class has it, as (first, last) runs, as for StdlibName.
+    ranges: tuple[tuple[int, int | None], ...]
+
+    @property
+    def versions(self) -> str:
+        """The versions that have it, in words: "3.14 and later", "3.11 and earlier", "3.10 to 3.12"."""
+        words = []
+        for a, b in self.ranges:
+            if b is None:
+                words.append(f"3.{a} and later")
+            elif a <= NAMES_FIRST:
+                words.append(f"3.{b} and earlier")
+            elif a == b:
+                words.append(f"3.{a}")
+            else:
+                words.append(f"3.{a} to 3.{b}")
+        return " or ".join(words)
+
+
+@cache
+def _members() -> dict[tuple[str, str], StdlibMember]:
+    text = resources.files("deptime").joinpath("stdlib_members.txt").read_text(encoding="utf-8")
+    out: dict[tuple[str, str], StdlibMember] = {}
+    for line in text.splitlines():
+        if not line.strip() or line.startswith("#"):
+            continue
+        m = MEMBER_LINE_RE.match(line)
+        if m is None:
+            raise ValueError(f"stdlib_members.txt: unreadable line {line!r}")
+        out[m.group("cls"), m.group("name")] = StdlibMember(
+            m.group("cls"), m.group("name"), _runs(m.group("ranges"))
+        )
+    return out
+
+
+def lookup_member(cls: str, name: str) -> StdlibMember | None:
+    """`cls.name` when the class's having it changes between Python 3.9 and 3.15, and `cls.*` when a Python from 3.12
+    on lacks the class; None when every version answers the same, and for a class or a dunder name the table doesn't
+    cover."""
+    return _members().get((cls, name))
 
 
 @cache

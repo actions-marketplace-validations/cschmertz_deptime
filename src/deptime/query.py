@@ -256,10 +256,12 @@ SAFE_STDLIB = frozenset(
 _RUNTIME_BASES = {"TypedDict": ("builtins", "dict")}
 
 
-def _stdlib_member(base: str, name: str) -> bool | None:
+def _stdlib_member(base: str, name: str) -> bool | stdlib.StdlibMember | None:
     """Whether a standard-library (or builtin) class has `name`; None when `base` isn't one DepTime reads.
     `typing_extensions` re-exports `typing`'s classes (7,373 classes of the format-20 index have one as a base,
-    most openai's and mistralai's TypedDicts), so its names are read as `typing`'s."""
+    most openai's and mistralai's TypedDicts), so its names are read as `typing`'s. A member that only some Python
+    versions have is its `stdlib_members.txt` entry instead (DT-CORE-92), so the answer doesn't depend on the Python
+    running DepTime; every other member is the same on each version the table covers."""
     module, _, attr = base.rpartition(".")
     module = module or "builtins"
     if module in ("typing", "typing_extensions"):
@@ -268,12 +270,20 @@ def _stdlib_member(base: str, name: str) -> bool | None:
         "builtins"
     }:
         return None
+    whole = stdlib.lookup_member(f"{module}.{attr}", "*")
+    if whole is not None:  # a class some Python DepTime runs on lacks (3.13's `asyncio.AbstractChildWatcher`)
+        return whole
     try:
         obj = getattr(sys.modules.get(module) or importlib.import_module(module), attr)
     except Exception:  # not there in this Python: say nothing
         return None
     if not isinstance(obj, type):
         return None
+    changed = stdlib.lookup_member(f"{module}.{attr}", name) or stdlib.lookup_member(
+        f"{obj.__module__}.{obj.__qualname__}", name
+    )
+    if changed is not None:
+        return changed
     # The class dictionaries, not `hasattr`: `Enum.value` is a descriptor that raises on the class itself.
     return any(name in vars(k) for k in obj.__mro__) or hasattr(obj, name)
 
@@ -1020,13 +1030,17 @@ class DepTime:
         is starlette's `Starlette.mount`, checked in starlette at the newest release fastapi's requirement allows; a
         standard-library base (`enum.Enum`, `Exception`) is asked directly. None (so `missing`) when the class has no
         such base, or every base that DepTime can read lacks the name; `unknown` when a base it can't read might
-        have it."""
+        have it, or a standard base has it on some Python versions only (DT-CORE-92)."""
         assert self.store is not None
         bases = self.store.external_bases(name, cls, row["ordinal"])
         unread: list[str] = []
+        sometimes: tuple[str, stdlib.StdlibMember] | None = None
         for base in bases:
             first, _, deeper = rest.partition(".")
             stdlib_has = _stdlib_member(base, first)
+            if isinstance(stdlib_has, stdlib.StdlibMember):
+                sometimes = sometimes or (base, stdlib_has)
+                continue
             if stdlib_has is not None:
                 if stdlib_has:
                     where = (
@@ -1050,6 +1064,18 @@ class DepTime:
                 return got
             if got.status == "unknown":
                 unread.append(base)
+        if sometimes:
+            base, member = sometimes
+            where = (
+                f"{prefix} inherits from `{base}`, which only Python {member.versions} has"
+                if member.name == "*"
+                else f"inherited from `{base}` only on Python {member.versions}"
+            )
+            return SymbolCheck(
+                path=full,
+                status="unknown",
+                hint=f"{where} (typeshed's stubs and CPython), and check_symbols isn't told which Python runs the code",
+            )
         if unread:
             return SymbolCheck(
                 path=full,
