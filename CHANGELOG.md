@@ -61,6 +61,12 @@ are data: they can grow in any release.)
 
 ## [Unreleased]
 
+### Added
+- Migration hints for LangGraph 1.0's prebuilt agent types, from its migration guide: `AgentState` and
+  `AgentStateWithStructuredResponse` → `langchain.agents.AgentState`, the interrupt types `HumanInterruptConfig` and
+  `ActionRequest` → `InterruptOnConfig`, and `HumanInterrupt` → `HITLRequest`, both in
+  `langchain.agents.middleware.human_in_the_loop` (#66).
+
 ## [1.1.5] - 2026-11-22
 
 ### Fixed
