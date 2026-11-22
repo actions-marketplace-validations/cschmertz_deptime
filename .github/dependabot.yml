@@ -30,9 +30,12 @@ updates:
       actions-minor-and-patch:
         update-types: [minor, patch]
 
-  # The optional hosted mode's image (docs/05). Nothing in CI builds it: a digest-only PR is a patched base image, but
-  # build the image locally before merging one that changes a tag (a newer Python or uv).
+  # The optional hosted mode's image (docs/05). Only re-pins of the current tags (a patched image) arrive: nothing in
+  # CI builds the image, so a newer Python or uv is a deliberate change, built locally first.
   - package-ecosystem: docker
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      - dependency-name: "*"
+        update-types: [version-update:semver-major, version-update:semver-minor]

@@ -61,6 +61,11 @@ are data: they can grow in any release.)
 
 ## [Unreleased]
 
+### Added
+- Migration hints for the anthropic SDK, from its changelog: `count_tokens` and `get_tokenizer` on `Anthropic`,
+  `Client`, `AsyncAnthropic` and `AsyncClient` (removed in 0.39.0) → `client.beta.messages.count_tokens`, and the
+  beta Skill response types → `BetaSkill` and `BetaDeletedSkill` (1.2.0) (#67).
+
 ### Changed
 - The Docker image's two base images (Python and uv) are pinned by digest, and Dependabot updates the pins
   weekly (DT-OSS-24).
