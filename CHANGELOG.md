@@ -61,6 +61,8 @@ are data: they can grow in any release.)
 
 ## [Unreleased]
 
+## [1.1.6] - 2026-11-22
+
 ### Added
 - Migration hints for LangGraph 1.0's prebuilt agent types, from its migration guide: `AgentState` and
   `AgentStateWithStructuredResponse` → `langchain.agents.AgentState`, the interrupt types `HumanInterruptConfig` and
@@ -805,7 +807,8 @@ A documentation release: the code is 0.1.13's, and every answer is the same.
 - The prebuilt index of 52 packages, downloaded on first run and refreshed daily; `deptime index pull|status|pack`;
   offline mode (`DEPTIME_OFFLINE=1`).
 
-[Unreleased]: https://github.com/cschmertz/deptime/compare/v1.1.5...HEAD
+[Unreleased]: https://github.com/cschmertz/deptime/compare/v1.1.6...HEAD
+[1.1.6]: https://github.com/cschmertz/deptime/compare/v1.1.5...v1.1.6
 [1.1.5]: https://github.com/cschmertz/deptime/compare/v1.1.4...v1.1.5
 [1.1.4]: https://github.com/cschmertz/deptime/compare/v1.1.3...v1.1.4
 [1.1.3]: https://github.com/cschmertz/deptime/compare/v1.1.2...v1.1.3
