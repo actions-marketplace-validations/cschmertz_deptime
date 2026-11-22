@@ -3708,3 +3708,10 @@ def test_diff_versions_says_when_the_range_is_reversed(dt):
     res = dt.diff_versions("httpx", "0.28.1", "0.26.0")
     assert res.events == [] and "0.26.0" in res.note and "0.28.1" in res.note
     assert dt.diff_versions("httpx", "0.27.2", "0.27.2").note is None
+
+
+def test_check_symbols_says_when_the_code_is_too_long(dt):
+    res = dt.check_symbols("httpx", "0.28.1", code="import httpx\n" + "x = 1\n" * 20_000)
+    assert res.results == [] and "100,000" in res.note and "parse" not in res.note
+    ok = dt.check_symbols("httpx", "0.28.1", code="import httpx\nhttpx.Client(timeout=5)\n")
+    assert [r.path for r in ok.results] == ["httpx", "httpx.Client"]
