@@ -3773,3 +3773,111 @@ path = "transformers.TrainingArguments.__init__(include_tokens_per_second)"
 target = "include_num_input_tokens_seen"
 quote = "include_tokens_per_second -> include_num_input_tokens_seen"
 url = "https://github.com/huggingface/transformers/blob/v5.0.0/MIGRATION_GUIDE_V5.md#L581"
+
+# pillow-10 (DT-DATA-86): the release notes' tables of removed names and what to use instead.
+[[hint]]
+package = "pillow"
+path = "PIL.Image.ANTIALIAS"
+target = "PIL.Image.Resampling.LANCZOS"
+quote = "Image.ANTIALIAS | Image.LANCZOS or Image.Resampling.LANCZOS"
+url = "https://pillow.readthedocs.io/en/stable/releasenotes/10.0.0.html"
+
+[[hint]]
+package = "pillow"
+path = "PIL.Image.LINEAR"
+target = "PIL.Image.Resampling.BILINEAR"
+quote = "Image.LINEAR | Image.BILINEAR or Image.Resampling.BILINEAR"
+url = "https://pillow.readthedocs.io/en/stable/releasenotes/10.0.0.html"
+
+[[hint]]
+package = "pillow"
+path = "PIL.Image.CUBIC"
+target = "PIL.Image.Resampling.BICUBIC"
+quote = "Image.CUBIC | Image.BICUBIC or Image.Resampling.BICUBIC"
+url = "https://pillow.readthedocs.io/en/stable/releasenotes/10.0.0.html"
+
+[[hint]]
+package = "pillow"
+path = "PIL.ImageFont.FreeTypeFont.getsize"
+target = "PIL.ImageFont.FreeTypeFont.getbbox"
+quote = "FreeTypeFont.getsize() and FreeTypeFont.getoffset() | FreeTypeFont.getbbox() and FreeTypeFont.getlength()"
+url = "https://pillow.readthedocs.io/en/stable/releasenotes/10.0.0.html"
+
+[[hint]]
+package = "pillow"
+path = "PIL.ImageFont.FreeTypeFont.getoffset"
+target = "PIL.ImageFont.FreeTypeFont.getbbox"
+quote = "FreeTypeFont.getsize() and FreeTypeFont.getoffset() | FreeTypeFont.getbbox() and FreeTypeFont.getlength()"
+url = "https://pillow.readthedocs.io/en/stable/releasenotes/10.0.0.html"
+
+[[hint]]
+package = "pillow"
+path = "PIL.ImageFont.FreeTypeFont.getsize_multiline"
+target = "PIL.ImageDraw.ImageDraw.multiline_textbbox"
+quote = "FreeTypeFont.getsize_multiline() | ImageDraw.multiline_textbbox()"
+url = "https://pillow.readthedocs.io/en/stable/releasenotes/10.0.0.html"
+
+[[hint]]
+package = "pillow"
+path = "PIL.ImageFont.ImageFont.getsize"
+target = "PIL.ImageFont.ImageFont.getbbox"
+quote = "ImageFont.getsize() | ImageFont.getbbox() and ImageFont.getlength()"
+url = "https://pillow.readthedocs.io/en/stable/releasenotes/10.0.0.html"
+
+[[hint]]
+package = "pillow"
+path = "PIL.ImageFont.TransposedFont.getsize"
+target = "PIL.ImageFont.TransposedFont.getbbox"
+quote = "TransposedFont.getsize() | TransposedFont.getbbox() and TransposedFont.getlength()"
+url = "https://pillow.readthedocs.io/en/stable/releasenotes/10.0.0.html"
+
+[[hint]]
+package = "pillow"
+path = "PIL.ImageDraw.ImageDraw.textsize"
+target = "PIL.ImageDraw.ImageDraw.textbbox"
+quote = "ImageDraw.textsize() and ImageDraw.multiline_textsize() | ImageDraw.textbbox(), ImageDraw.textlength() and ImageDraw.multiline_textbbox()"
+url = "https://pillow.readthedocs.io/en/stable/releasenotes/10.0.0.html"
+
+[[hint]]
+package = "pillow"
+path = "PIL.ImageDraw.ImageDraw.multiline_textsize"
+target = "PIL.ImageDraw.ImageDraw.multiline_textbbox"
+quote = "ImageDraw.textsize() and ImageDraw.multiline_textsize() | ImageDraw.textbbox(), ImageDraw.textlength() and ImageDraw.multiline_textbbox()"
+url = "https://pillow.readthedocs.io/en/stable/releasenotes/10.0.0.html"
+
+[[hint]]
+package = "pillow"
+path = "PIL.ImageDraw2.Draw.textsize"
+target = "PIL.ImageDraw2.Draw.textbbox"
+quote = "ImageDraw2.Draw.textsize() | ImageDraw2.Draw.textbbox() and ImageDraw2.Draw.textlength()"
+url = "https://pillow.readthedocs.io/en/stable/releasenotes/10.0.0.html"
+
+# pillow-12
+[[hint]]
+package = "pillow"
+path = "PIL.ImageMath.eval"
+target = "PIL.ImageMath.lambda_eval"
+quote = "ImageMath.eval() has been removed. Use lambda_eval() or unsafe_eval() instead."
+url = "https://pillow.readthedocs.io/en/stable/releasenotes/12.0.0.html"
+
+[[hint]]
+package = "pillow"
+path = "PIL.ImageCms.versions"
+target = "PIL.features.version_module"
+quote = "ImageCms.versions() | PIL.features.version_module() with feature=\"littlecms2\""
+url = "https://pillow.readthedocs.io/en/stable/releasenotes/12.0.0.html"
+
+# pillow-13
+[[hint]]
+package = "pillow"
+path = "PIL.ExifTags.IFD.Makernote"
+target = "PIL.ExifTags.IFD.MakerNote"
+quote = "ExifTags.IFD.Makernote has been removed. Instead, use ExifTags.IFD.MakerNote."
+url = "https://pillow.readthedocs.io/en/stable/releasenotes/13.0.0.html"
+
+[[hint]]
+package = "pillow"
+path = "PIL.Image.Image.get_child_images"
+target = "PIL.ImageFile.ImageFile.get_child_images"
+quote = "Image.Image.get_child_images() has been moved to ImageFile.ImageFile.get_child_images()."
+url = "https://pillow.readthedocs.io/en/stable/releasenotes/13.0.0.html"

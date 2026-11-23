@@ -5254,6 +5254,9 @@ def apply_served(snap: ApiSnapshot, rules: Sequence[ServedRule], root: Path) -> 
         if re.search(rule.when, text) is None:
             continue
         names = {**snap.bound, **snap.symbols}
+        if rule.members_of:
+            _serve_members(snap, rule, names)
+            continue
         children: dict[str, list[str]] = {}
         for path in names:
             children.setdefault(path.rpartition(".")[0], []).append(path)
@@ -5331,6 +5334,36 @@ def apply_served(snap: ApiSnapshot, rules: Sequence[ServedRule], root: Path) -> 
                 for child in children.get(path, ()):
                     if child.endswith(rule.ending) and names[child].kind != "module":
                         bind(child + rule.add, names[child])
+
+
+def _serve_members(snap: ApiSnapshot, rule: ServedRule, names: dict[str, SymbolRecord]) -> None:
+    """A `members_of` rule: each public member of each class it names in a module it matches, as a name of that
+    module, after `prefix` (DT-DATA-86: pillow's `setattr(module, item.name, item.value)` over `Resampling` binds
+    `PIL.Image.LANCZOS`). The module sets them on import, so they are public API, recorded as an assignment
+    `LANCZOS = 1` would be. A name the module binds itself stays as it is."""
+    modules = [_part_pattern(m) for m in rule.modules]
+    for path, rec in list(names.items()):
+        if rec.kind != "module" or not any(m.fullmatch(path) for m in modules):
+            continue
+        for cls in rule.members_of:
+            found = names.get(f"{path}.{cls}")
+            if found is None or found.kind != "class":
+                continue
+            if snap.own_members:
+                record = snap.classes.get(found.canonical or found.path)
+                members = list(record.members.values()) if record else []
+            else:
+                below = f"{path}.{cls}."
+                members = [r for p, r in names.items() if p.startswith(below) and "." not in p[len(below) :]]
+            start = rule.prefix.replace("{class}", cls)
+            for member in members:
+                leaf = start + member.path.rpartition(".")[2]
+                name = f"{path}.{leaf}"
+                if member.kind != "attribute" or leaf.startswith("_") or name in snap.symbols:
+                    continue
+                snap.symbols[name] = SymbolRecord(path=name, kind="attribute", canonical=name)
+                snap.bound.pop(name, None)
+                snap.internal.pop(name, None)
 
 
 def _literal_table(file: Path, name: str) -> list[tuple[str, str]]:

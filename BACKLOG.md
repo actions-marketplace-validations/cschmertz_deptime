@@ -21,8 +21,8 @@ which of a project's code a dependency update breaks. Everything done before 202
 - **Released:** 1.1.3 (2026-11-21) is on PyPI, the MCP Registry and GitHub: the six tools, the upgrade check (a
   command, a GitHub Action, an MCP tool and a Claude Code plugin command), and the 1.x promise in CHANGELOG.md's
   versioning section: the contract only grows.
-- **Index:** 53 packages and 6,823 releases on 2026-11-17 (`SNAPSHOT_FORMAT` 29, schema 2); `index.sqlite.xz` is
-  51.4 MB and the `.gz` 79.2 MB. `build-index` runs at 04:17 and 16:17 UTC, replaces the rolling `index` release and
+- **Index:** 54 packages and 6,898 releases on 2026-11-23 (`SNAPSHOT_FORMAT` 29, schema 2); `index.sqlite.xz` is
+  52.6 MB and the `.gz` 81.1 MB. `build-index` runs at 04:17 and 16:17 UTC, replaces the rolling `index` release and
   signs it. A build with no extraction change usually takes under 20 minutes; a `SNAPSHOT_FORMAT` bump means one cold
   build of about 3 hours (format 27's: 2 h 48 min).
 - **Checks that run without anyone:** `ci` on every push (693 offline tests), and `bench` on every code change and
@@ -99,6 +99,9 @@ In order. The first line of each phase is what it delivers.
 - [x] **DT-QA-28** (2026-11-23): 31.7% of the major library updates in 12,766 Dependabot Python pull requests are to
   a covered package (bar 60%, missed); the protocol's shortlist of 15 would make it 64.0%, pillow alone 47.3%
   (`bench/coverage-share/results-2026-11-23.md`). Adding them is DT-DATA-86 to DT-DATA-100, under Later.
+- [x] **DT-DATA-86** (2026-11-23): pillow, 9.4.0 to 13.0.0 (18 releases): the `.xz` grows 80 KB (0.15%), its build
+  job takes 38 s. A served rule can name the enums whose members a module binds on import (`members_of`); 15 curated
+  hints from its release notes.
 
 Phases 2 and 3 (the command and the GitHub Action) shipped in 0.2.0. DT-QA-22 met every bar on real update pull
 requests; its three wrong answers are fixed in the published index (DT-CORE-72, DT-DATA-82, DT-DATA-51: a second,
@@ -398,7 +401,6 @@ maintainer's call on the download):
 
 | ID | Package | Major pairs it adds to DT-QA-28's C |
 |---|---|---|
-| DT-DATA-86 | pillow | 338 |
 | DT-DATA-87 | uvicorn | 99 |
 | DT-DATA-88 | cryptography | 59 |
 | DT-DATA-89 | oauthlib | 56 |

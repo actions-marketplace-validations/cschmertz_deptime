@@ -126,8 +126,12 @@ class ServedRule:
       path its value names (`module:name` or dotted), in a release that has the key's module, with `message` as
       its deprecation, `{key}` and `{value}` filled in as the table writes them (DT-DATA-60): pydantic 2 serves
       `pydantic.error_wrappers.ValidationError` as `pydantic.ValidationError`, from `MOVED_IN_V2` in
-      `pydantic/_migration.py`, with a warning that it moved.
-    Assembly counts a served name as public only where some release has it as public API.
+      `pydantic/_migration.py`, with a warning that it moved;
+    - in each module `modules` matches, each public member of each class `members_of` names there, as a name of
+      the module, `prefix` before it (`{class}` is the class's name): pillow binds `PIL.Image.LANCZOS` and
+      `PIL.DdsImagePlugin.DDSD_CAPS` with `setattr(module, ..., item.value)` over its enums (DT-DATA-86).
+    Assembly counts a served name as public only where some release has it as public API, except a
+    `members_of` name: the module sets it on import, every time, so it is public API where it is served.
     """
 
     file: str
@@ -141,9 +145,20 @@ class ServedRule:
     value: str = ""
     target: str = ""
     message: str = ""
+    members_of: tuple[str, ...] = ()
+    prefix: str = ""
 
     def __post_init__(self) -> None:
         re.compile(self.when)
+        if self.members_of or self.prefix:
+            others = (self.module, self.serves, self.ending, self.add, self.table, self.value, self.target)
+            if not (self.members_of and self.modules) or any(others) or self.message:
+                raise ValueError(f"served rule with `members_of` needs `modules`, `prefix` at most: {self}")
+            if not all(re.fullmatch(r"[A-Za-z_]\w*", c) for c in self.members_of):
+                raise ValueError(f"served rule's `members_of` names classes in the module: {self}")
+            if not re.fullmatch(r"(?:\w|\{class\})*", self.prefix):
+                raise ValueError(f"served rule's `prefix` is a name's start, `{{class}}` allowed: {self}")
+            return
         paths_table = bool(self.table) and not self.modules and not self.module
         if not paths_table and (
             bool(self.module) == bool(self.modules) or bool(self.module) != bool(self.serves)
@@ -188,6 +203,8 @@ class ServedRule:
             "value": self.value,
             "target": self.target,
             "message": self.message,
+            # Only when set: a rule without them reads as before, so its package's snapshots stay current.
+            **({"members_of": list(self.members_of), "prefix": self.prefix} if self.members_of else {}),
         }
 
 
@@ -292,7 +309,7 @@ def load_coverage(path: Path | None = None) -> Coverage:
             shares_import_name_with=tuple(canonicalize_name(n) for n in p.get("shares_import_name_with", ())),
             own_members=bool(p.get("own_members", True)),
             served=tuple(
-                ServedRule(**{k: tuple(v) if k == "modules" else v for k, v in r.items()})
+                ServedRule(**{k: tuple(v) if k in ("modules", "members_of") else v for k, v in r.items()})
                 for r in p.get("served", ())
             ),
             internal_names=tuple(p.get("internal_names", ())),
