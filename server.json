@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.cschmertz/deptime",
   "title": "DepTime",
-  "description": "What changed in a Python library, in which release, and what replaces it. Answered locally.",
+  "description": "Know what a Python dependency update breaks before you merge it. Offline, free, no AI in the loop.",
   "repository": {
     "url": "https://github.com/cschmertz/deptime",
     "source": "github"
@@ -14,13 +14,13 @@
       "sizes": ["any"]
     }
   ],
-  "version": "1.1.6",
+  "version": "1.1.7",
   "packages": [
     {
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "deptime",
-      "version": "1.1.6",
+      "version": "1.1.7",
       "runtimeHint": "uvx",
       "transport": {
         "type": "stdio"

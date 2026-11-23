@@ -16,7 +16,7 @@ which of a project's code a dependency update breaks. Everything done before 202
 
 ---
 
-## Current state: stable, v1.1.6
+## Current state: stable, v1.1.7
 
 - **Released:** 1.1.3 (2026-11-21) is on PyPI, the MCP Registry and GitHub: the six tools, the upgrade check (a
   command, a GitHub Action, an MCP tool and a Claude Code plugin command), and the 1.x promise in CHANGELOG.md's
@@ -193,6 +193,8 @@ in-sample run flags 0 of 3,291 working uses and fails no pull request without a 
   not tags; a pull request's own run only for forks.
 - [x] **DT-OSS-26** (2026-11-23, PR #73 by flipcyde101, audit G10): the Claude Code hint hook finds a real Python
   on Windows (skipping Store aliases) and stays silent without one.
+- [x] **DT-GTM-12** (2026-11-23): PyPI's summary, the MCP Registry's description and the server's own description
+  lead with the upgrade check, as the README and GitHub do; released in 1.1.7.
 
 **Phase 4, the fix (the model's part, outside DepTime): done.** DT-QA-27 met its bar on broken updates nobody had
 seen (`bench/agent-fix/qa27/results-2026-11-17.md`). Held from it: DepTime doesn't check a pydantic model's required

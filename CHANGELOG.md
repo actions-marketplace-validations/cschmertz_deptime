@@ -61,6 +61,8 @@ are data: they can grow in any release.)
 
 ## [Unreleased]
 
+## [1.1.7] - 2026-11-23
+
 ### Added
 - Migration hints for the anthropic SDK, from its changelog: `count_tokens` and `get_tokenizer` on `Anthropic`,
   `Client`, `AsyncAnthropic` and `AsyncClient` (removed in 0.39.0) → `client.beta.messages.count_tokens`, and the
@@ -69,6 +71,8 @@ are data: they can grow in any release.)
 ### Changed
 - The Docker image's two base images (Python and uv) are pinned by digest, and Dependabot updates the pins
   weekly (DT-OSS-24).
+- PyPI's summary, the MCP Registry's description and the MCP server's own description lead with the upgrade check,
+  as the README and the GitHub page do, so directories that copy them no longer show the old pitch (DT-GTM-12).
 
 ### Fixed
 - The Claude Code plugin's hint hook works on Windows: it uses the first real `python.exe` or `python3.exe` on
@@ -821,7 +825,8 @@ A documentation release: the code is 0.1.13's, and every answer is the same.
 - The prebuilt index of 52 packages, downloaded on first run and refreshed daily; `deptime index pull|status|pack`;
   offline mode (`DEPTIME_OFFLINE=1`).
 
-[Unreleased]: https://github.com/cschmertz/deptime/compare/v1.1.6...HEAD
+[Unreleased]: https://github.com/cschmertz/deptime/compare/v1.1.7...HEAD
+[1.1.7]: https://github.com/cschmertz/deptime/compare/v1.1.6...v1.1.7
 [1.1.6]: https://github.com/cschmertz/deptime/compare/v1.1.5...v1.1.6
 [1.1.5]: https://github.com/cschmertz/deptime/compare/v1.1.4...v1.1.5
 [1.1.4]: https://github.com/cschmertz/deptime/compare/v1.1.3...v1.1.4

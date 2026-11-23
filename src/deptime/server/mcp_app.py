@@ -56,7 +56,8 @@ def build_mcp_and_tools(
     mcp = MCPServer(
         name="deptime",
         title="DepTime",
-        description="API time machine for Python libraries: what changed, when, and what to use instead.",
+        description="Know what a Python dependency update breaks before you merge it: what changed, in which release, "
+        "and what replaces it.",
         instructions=INSTRUCTIONS,
         website_url=website_url,
         version=__version__,
