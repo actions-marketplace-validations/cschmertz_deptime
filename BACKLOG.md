@@ -95,6 +95,10 @@ What still needs a person, about once a month:
 
 In order. The first line of each phase is what it delivers.
 
+**Coverage: are 53 packages enough?**
+- [ ] **DT-QA-28**: how often a real Python dependency update is to a covered package, on Dependabot's pull requests
+  with no filter by name; decides whether coverage grows, protocol first (`bench/coverage-share/`) · `P1` `S`
+
 Phases 2 and 3 (the command and the GitHub Action) shipped in 0.2.0. DT-QA-22 met every bar on real update pull
 requests; its three wrong answers are fixed in the published index (DT-CORE-72, DT-DATA-82, DT-DATA-51: a second,
 in-sample run flags 0 of 3,291 working uses and fails no pull request without a confirmed break,
