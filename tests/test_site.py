@@ -1,7 +1,13 @@
 """Rename-map pages generated from the index (DT-GTM-01)."""
 
+from pathlib import Path
+
+import pytest
+
 from deptime.models import Replacement
 from deptime.site import Migration, Range, _code, _evidence, build
+
+SDIST = (Path(__file__).resolve().parents[1] / "PKG-INFO").is_file()
 
 
 def _read(path) -> str:
@@ -66,6 +72,7 @@ def test_paths_no_one_writes_are_left_off_the_maps():
     assert not _artefact("requests.ConnectionError")
 
 
+@pytest.mark.skipif(SDIST, reason="docs/assets is not included in the sdist")
 def test_pages_carry_the_brand_link_previews_and_a_filter(dt, tmp_path):
     migration = Migration("httpx-0.26-to-0.28", "httpx 0.26 → 0.28", (Range("httpx", "0.26."),))
     build(dt, tmp_path, (migration,), base_url="https://example.invalid")

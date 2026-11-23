@@ -1,9 +1,12 @@
 # Optional hosted mode (docs/05-self-hosting.md). Local use needs none of this: `uvx deptime mcp`.
 # The index is not baked in: `deptime serve` downloads the published index into $DEPTIME_HOME in the background
 # at start-up (GitHub Releases) and refreshes it daily. Mount a volume at /data to keep it across restarts.
-FROM python:3.12-slim
+# Both base images are pinned by digest; Dependabot moves the pins weekly (.github/dependabot.yml).
+FROM ghcr.io/astral-sh/uv:0.11@sha256:77280f2f771df71f90786c314fe1bbc1e023feac652969bbf139c280babf2eb7 AS uv
 
-COPY --from=ghcr.io/astral-sh/uv:0.11 /uv /uvx /bin/
+FROM python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b
+
+COPY --from=uv /uv /uvx /bin/
 
 WORKDIR /app
 ENV UV_COMPILE_BYTECODE=1 \

@@ -90,7 +90,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7 # pin to a commit in your own workflows
-      - uses: cschmertz/deptime@v1.1.4
+      - uses: cschmertz/deptime@v1.1.6
 ```
 
 You can run the same check from a terminal with `uvx deptime check-upgrade`, or in Claude Code with `/deptime:fix-upgrade`, which also has Claude fix what broke.
@@ -187,7 +187,7 @@ Every test set and result is in the [benchmark](https://github.com/cschmertz/dep
 </picture>
 </p>
 
-Twice a day, GitHub reads each new release of every covered library (without running it), compares it with the release before, and publishes the result as one signed file. DepTime downloads that file and answers every question on your machine, in milliseconds. More in the [architecture doc](https://github.com/cschmertz/deptime/blob/main/docs/04-architecture.md).
+Twice a day, GitHub reads each new release of every covered library (without running it), compares it with the release before, and publishes the result as one file, signed so anyone can check it came from that build ([how](https://github.com/cschmertz/deptime/blob/main/SECURITY.md#verifying-the-index)). DepTime downloads that file and answers every question on your machine, in milliseconds. More in the [architecture doc](https://github.com/cschmertz/deptime/blob/main/docs/04-architecture.md).
 
 ## Works with
 

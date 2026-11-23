@@ -170,6 +170,45 @@ def test_the_shipped_names_table_reads_and_has_the_known_changes():
     assert stdlib.lookup_name("collections", "_chain") is None
 
 
+def test_the_shipped_members_table_reads_and_has_the_known_changes():
+    # DT-CORE-92: members of standard-library classes that come and go, from typeshed's stubs and CPython 3.9-3.15
+    # (tools/stdlib_members.py), so check_symbols doesn't answer from whichever Python runs DepTime.
+    text = resources.files("deptime").joinpath("stdlib_members.txt").read_text(encoding="utf-8")
+    lines = [line for line in text.splitlines() if line.strip() and not line.startswith("#")]
+    assert len(lines) > 1000 and all(stdlib.MEMBER_LINE_RE.match(line) for line in lines)
+    starts = stdlib.lookup_member("unittest.TestCase", "assertStartsWith")
+    assert starts.ranges == ((14, None),) and starts.versions == "3.14 and later"
+    # Under each public path of the class, and through subclasses in the standard library.
+    assert stdlib.lookup_member("unittest.case.TestCase", "assertStartsWith").ranges == starts.ranges
+    assert stdlib.lookup_member("unittest.IsolatedAsyncioTestCase", "assertStartsWith").ranges == (
+        (14, None),
+    )
+    equals = stdlib.lookup_member("unittest.TestCase", "assertEquals")
+    assert equals.ranges == ((9, 11),) and equals.versions == "3.11 and earlier"
+    watcher = stdlib.lookup_member("asyncio.AbstractEventLoopPolicy", "get_child_watcher")
+    assert watcher.versions == "3.13 and earlier"
+    # typeshed types memoryview as a Sequence, but CPython's only has `count` from 3.14.
+    assert stdlib.lookup_member("builtins.memoryview", "count").ranges == ((14, None),)
+    assert stdlib.lookup_member("asyncio.Queue", "shutdown").versions == "3.13 and later"
+    # The same on every version: not listed. typeshed only lists `UserDict.get` from 3.12; CPython has it on all.
+    assert stdlib.lookup_member("unittest.TestCase", "assertEqual") is None
+    assert stdlib.lookup_member("collections.UserDict", "get") is None
+    assert stdlib.lookup_member("enum.Enum", "value") is None
+    # Dunder names are answered from fixed lists before a base is asked (DT-CORE-38).
+    assert stdlib.lookup_member("enum.Enum", "__getstate__") is None
+    assert stdlib.StdlibMember("x.C", "y", ((10, 12),)).versions == "3.10 to 3.12"
+    assert (
+        stdlib.StdlibMember("x.C", "y", ((9, 10), (13, None))).versions
+        == "3.10 and earlier or 3.13 and later"
+    )
+    assert stdlib.StdlibMember("x.C", "y", ((12, 12),)).versions == "3.12"
+    assert stdlib.StdlibMember("x.C", "y", ((9, 9),)).versions == "3.9 and earlier"
+    # A class a Python DepTime runs on (3.12 and later) lacks: `*`, its own versions. Not one added by 3.12.
+    assert stdlib.lookup_member("asyncio.AbstractChildWatcher", "*").versions == "3.13 and earlier"
+    assert stdlib.lookup_member("re.PatternError", "*").versions == "3.13 and later"
+    assert stdlib.lookup_member("enum.StrEnum", "*") is None
+
+
 def _import_tb(name: str, module: str, minor: int) -> str:
     return f"ImportError: cannot import name '{name}' from '{module}' (/usr/lib/python3.{minor}/{module}/__init__.py)\n"
 

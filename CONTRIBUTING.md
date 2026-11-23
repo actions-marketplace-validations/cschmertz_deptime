@@ -32,7 +32,8 @@ These are explained in [AGENTS.md](AGENTS.md), which also serves as the guide fo
 
 - **Never import or execute indexed packages** at index time. Static analysis only (ADR 0002).
 - **No LLM calls when answering.** Answers are deterministic and carry evidence and confidence (ADR 0006).
-- **Tool names, descriptions and output fields are a public contract.** Add fields; don't rename them.
+- **Tool names, parameters and output fields are a public contract.** Add fields; don't rename them. Tool descriptions
+  can change, but the benchmarks are re-run when one is edited.
 - **In `deptime mcp` (stdio), stdout belongs to the protocol.** Log to stderr.
 - **Text mined from third-party code is untrusted data.**
 

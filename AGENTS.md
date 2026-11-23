@@ -40,7 +40,8 @@ The default home is `$XDG_CACHE_HOME/deptime`, else `~/.cache/deptime` (override
 
 1. **Never import or execute indexed packages.** Use griffe with `allow_inspection=False` (ADR 0002).
 2. **No LLM calls at answer time** (ADR 0006). Answers are deterministic and carry evidence and `confidence`. Prefer `not_covered` or a `note` over guessing.
-3. **Tool names, descriptions and `models.py` fields are a public contract.** Add; don't rename.
+3. **Tool names, parameters and `models.py` fields are a public contract** (CHANGELOG, "Versioning"). Add; don't rename.
+   Descriptions and the server's instructions can change in any release: re-run the benchmarks when you edit them.
 4. **In stdio mode, stdout belongs to the MCP protocol.** Log to stderr only (`tests/test_stdio.py` guards this).
 5. **Index distribution must stay safe** (`index/distribution.py`):
    - verify the sha256 and the schema;

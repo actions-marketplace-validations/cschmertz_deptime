@@ -61,6 +61,46 @@ are data: they can grow in any release.)
 
 ## [Unreleased]
 
+### Added
+- Migration hints for the anthropic SDK, from its changelog: `count_tokens` and `get_tokenizer` on `Anthropic`,
+  `Client`, `AsyncAnthropic` and `AsyncClient` (removed in 0.39.0) → `client.beta.messages.count_tokens`, and the
+  beta Skill response types → `BetaSkill` and `BetaDeletedSkill` (1.2.0) (#67).
+
+### Changed
+- The Docker image's two base images (Python and uv) are pinned by digest, and Dependabot updates the pins
+  weekly (DT-OSS-24).
+
+## [1.1.6] - 2026-11-22
+
+### Added
+- Migration hints for LangGraph 1.0's prebuilt agent types, from its migration guide: `AgentState` and
+  `AgentStateWithStructuredResponse` → `langchain.agents.AgentState`, the interrupt types `HumanInterruptConfig` and
+  `ActionRequest` → `InterruptOnConfig`, and `HumanInterrupt` → `HITLRequest`, both in
+  `langchain.agents.middleware.human_in_the_loop` (#66).
+
+### Fixed
+- `check_symbols` gives the same answer on every Python for a name a class inherits from the standard library. It
+  used to ask the Python running DepTime, so django's `SimpleTestCase.assertStartsWith` (unittest's, added in 3.14)
+  was `missing` on 3.12 and `present` on 3.14. A member only some Python versions have is now `unknown`, with those
+  versions in `hint`, and so is a name under a base class a Python from 3.12 on lacks; the versions come from a new
+  table built from typeshed's stubs and CPython 3.9 to 3.15 (DT-CORE-92).
+
+## [1.1.5] - 2026-11-22
+
+### Fixed
+- `deptime explain --installed` with an item that isn't `PKG==VER` prints the usage and what's wrong, exit 2,
+  instead of a traceback (DT-CORE-87, #58).
+- `diff_versions` with `from_version` later than `to_version` returns a note saying the range is reversed,
+  instead of no events, which read as "nothing changed" (DT-CORE-88, #59).
+- `check-upgrade` keeps the first pin when a requirements file pins a package twice, as for `pyproject.toml`, so an
+  update to that line is checked (DT-CORE-89, #60).
+- `check_symbols(code=...)` from Python with code over 100,000 characters says it's too long and reads nothing,
+  instead of "doesn't parse" (DT-CORE-90, #61).
+- `check-upgrade` no longer follows an absolute `-r` include out of the project, whose pins looked newly added and
+  went unchecked (DT-CORE-91, #62).
+- The tests in the source distribution pass: those that need files it leaves out (`bench/`, `action.yml`,
+  `.github/workflows/`, `docs/assets/`) are skipped there (DT-OSS-23, #63).
+
 ## [1.1.4] - 2026-11-21
 
 ### Fixed
@@ -776,7 +816,9 @@ A documentation release: the code is 0.1.13's, and every answer is the same.
 - The prebuilt index of 52 packages, downloaded on first run and refreshed daily; `deptime index pull|status|pack`;
   offline mode (`DEPTIME_OFFLINE=1`).
 
-[Unreleased]: https://github.com/cschmertz/deptime/compare/v1.1.4...HEAD
+[Unreleased]: https://github.com/cschmertz/deptime/compare/v1.1.6...HEAD
+[1.1.6]: https://github.com/cschmertz/deptime/compare/v1.1.5...v1.1.6
+[1.1.5]: https://github.com/cschmertz/deptime/compare/v1.1.4...v1.1.5
 [1.1.4]: https://github.com/cschmertz/deptime/compare/v1.1.3...v1.1.4
 [1.1.3]: https://github.com/cschmertz/deptime/compare/v1.1.2...v1.1.3
 [1.1.2]: https://github.com/cschmertz/deptime/compare/v1.1.1...v1.1.2
