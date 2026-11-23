@@ -61,6 +61,12 @@ are data: they can grow in any release.)
 
 ## [Unreleased]
 
+### Added
+- pillow is covered, 9.4.0 to 13.0.0, with 15 migration hints from its release notes: `Image.ANTIALIAS` →
+  `Image.Resampling.LANCZOS`, `getsize` → `getbbox`, `textsize` → `textbbox`, `ImageMath.eval` → `lambda_eval` and
+  more. A `[[package.served]]` rule in `coverage.toml` can name, with `members_of`, the enums whose members a module
+  binds as its own names on import, as pillow does for `Image.LANCZOS` and `Image.FLIP_LEFT_RIGHT` (DT-DATA-86).
+
 ## [1.1.7] - 2026-11-23
 
 ### Added

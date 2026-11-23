@@ -23,8 +23,10 @@
 #                  module `serves`, with all its names (`{part}` matches one dotted part, the same in both), or in
 #                  each module `modules` matches, `<name><add>` as each `<name>` ending in `ending`, or each key
 #                  of the literal mapping `table` (`<file>:<NAME>`), and the key plus `add`, as the name `target`
-#                  makes of the key's value matching `value` (DT-DATA-58). Such a name counts as public only where
-#                  some release of the package has it as public API.
+#                  makes of the key's value matching `value` (DT-DATA-58), or in each module `modules` matches, each
+#                  public member of each class `members_of` names there, after `prefix` (`{class}`: the class's name),
+#                  as a name of the module (DT-DATA-86). Such a name counts as public only where some release of the
+#                  package has it as public API; a `members_of` name, which the module sets on import, wherever served.
 
 [policy]
 # For every minor series (X.Y) that has a release on/after `since`, index every release: a patch-level break
@@ -320,6 +322,26 @@ name = "numpy"
 import_names = ["numpy"]
 tier = "B"
 notes = "Compiled; rely on shipped .pyi stubs. Methods only compiled code registers, such as `ndarray.tostring`, aren't indexed."
+
+[[package]]
+name = "pillow"
+import_names = ["PIL"]
+tier = "B"
+notes = "Compiled core in private modules (`PIL._imaging`); the public API is Python. Its `deprecate()` calls aren't read, so a deprecation shows only where a docstring states it."
+# Every release binds its enums' members as module names, on import: `Image.LANCZOS`, `Image.FLIP_LEFT_RIGHT`.
+[[package.served]]
+file = "PIL/Image.py"
+when = 'for enum in \(Transpose, Transform, Resampling, Dither, Palette, Quantize\):\s+for item in enum:\s+setattr\(module, item\.name, item\.value\)'
+modules = ["PIL.Image"]
+members_of = ["Transpose", "Transform", "Resampling", "Dither", "Palette", "Quantize"]
+
+# From 10.2, `DdsImagePlugin.DDSD_CAPS` and the other old constants are the members of four flag enums.
+[[package.served]]
+file = "PIL/DdsImagePlugin.py"
+when = 'setattr\(module, (?:"DDPF_" \+ |f"DDPF_\{)item\d?\.name'
+modules = ["PIL.DdsImagePlugin"]
+members_of = ["DDSD", "DDSCAPS", "DDSCAPS2", "DDPF"]
+prefix = "{class}_"
 
 [[package]]
 name = "polars"

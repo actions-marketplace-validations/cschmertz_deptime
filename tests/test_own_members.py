@@ -968,6 +968,99 @@ def test_a_served_rule_with_a_table_needs_its_fields(fields):
         ServedRule(file="tok/lazy.py", when="x", **fields)
 
 
+# DT-DATA-86: pillow binds its enums' members as module names on import, `setattr(module, item.name, item.value)`
+# (`PIL.Image.LANCZOS`), and from 10.2 its DDS plugin's old constants the same way, each after its enum's name
+# (`DDSD_CAPS`), where 10.1 assigned them.
+ENUM_LOOP = (
+    "import sys\nfrom enum import IntEnum, IntFlag\n\n\n"
+    "class Resampling(IntEnum):\n    NEAREST = 0\n    LANCZOS = 1\n\n    def _helper(self):\n        pass\n\n\n"
+    "class Transpose(IntEnum):\n    FLIP = 0\n\n\n"
+    "class DDSD(IntFlag):\n    CAPS = 1\n    _HIDDEN = 2\n\n\n"
+    "NEAREST = 'mine'\n"
+    "module = sys.modules[__name__]\n"
+    "for enum in (Resampling, Transpose):\n    for item in enum:\n        setattr(module, item.name, item.value)\n"
+)
+SETATTR_SERVING = {
+    "10.1": {"pil/__init__.py": "", "pil/image.py": "DDSD_CAPS = 0x1\nNEAREST = 0\n"},
+    "10.2": {
+        "pil/__init__.py": "",
+        "pil/image.py": ENUM_LOOP
+        + "for item in DDSD:\n    setattr(module, f'DDSD_{item.name}', item.value)\n",
+    },
+}
+MEMBER_RULES = (
+    ServedRule(
+        file="pil/image.py",
+        when=r"for enum in \(Resampling, Transpose\)",
+        modules=("pil.image",),
+        members_of=("Resampling", "Transpose", "Missing"),
+    ),
+    ServedRule(
+        file="pil/image.py", when="f'DDSD_", modules=("pil.image",), members_of=("DDSD",), prefix="{class}_"
+    ),
+)
+PIL = PackageSpec(name="pil", import_names=("pil",), tier="B", served=MEMBER_RULES)
+
+
+def test_members_of_classes_a_module_binds_on_import_are_public_names_of_the_module(tmp_path):
+    old, new = _snapshots(tmp_path, SETATTR_SERVING, "pil", MEMBER_RULES)
+    assert {"pil.image.LANCZOS", "pil.image.FLIP", "pil.image.DDSD_CAPS"} <= new.symbols.keys()
+    assert new.symbols["pil.image.LANCZOS"] == SymbolRecord(
+        "pil.image.LANCZOS", "attribute", "pil.image.LANCZOS"
+    )
+    # Private members, methods, and a name the module assigns itself stay as they are; a class not there serves none.
+    assert not {"pil.image._helper", "pil.image.DDSD__HIDDEN"} & {*new.symbols, *new.bound, *new.internal}
+    assert new.symbols["pil.image.NEAREST"].canonical == "pil.image.NEAREST"
+    assert not new.bound
+    store = IndexStore.memory()
+    store.rebuild_package(PIL, [old, new])
+    rows, _total = store.events_between("pil", 0, 1, 100, severity=SEVERITY)
+    assert not {e["path"] for e in rows if e["kind"] in ("removed", "kind_changed")} & {
+        "pil.image.DDSD_CAPS",
+        "pil.image.NEAREST",
+    }
+    dt = DepTime(store, Coverage(POLICY, (PIL,)))
+    results = dt.check_symbols(
+        "pil", "10.2", [SymbolQuery(path=p) for p in ("pil.image.LANCZOS", "pil.image.DDSD_CAPS")]
+    ).results
+    assert [r.status for r in results] == ["present", "present"]
+
+
+def test_a_rule_without_the_newer_fields_records_as_before():
+    """A snapshot rebuilds when its rules' records change: a package whose rules don't use `members_of` keeps
+    its snapshots."""
+    assert set(SERVED_RULES[0].as_dict()) == {
+        "file",
+        "when",
+        "module",
+        "serves",
+        "modules",
+        "ending",
+        "add",
+        "table",
+        "value",
+        "target",
+        "message",
+    }
+    assert MEMBER_RULES[1].as_dict()["prefix"] == "{class}_"
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"members_of": ("Resampling",)},  # no modules
+        {"modules": ("pil",), "prefix": "X_"},  # a prefix without members_of
+        {"modules": ("pil",), "members_of": ("Resampling",), "ending": "T", "add": "F"},
+        {"modules": ("pil",), "members_of": ("pil.Resampling",)},  # a class's name, not a path
+        {"modules": ("pil",), "members_of": ("Resampling",), "prefix": "{name}_"},
+        {"module": "pil.a", "serves": "pil.b", "members_of": ("Resampling",)},
+    ],
+)
+def test_a_served_rule_with_members_of_takes_modules_and_a_prefix(fields):
+    with pytest.raises(ValueError):
+        ServedRule(file="pil/image.py", when="x", **fields)
+
+
 # DT-CORE-40: transformers 4.54's `AutoModelForVision2Seq` warns only from its classmethods that the class is
 # deprecated; and pydantic-ai's `MCPServerHTTP` says to use `MCPServerSSE`, which is deprecated in turn and goes too.
 WARNS = "import warnings\n\n\n"
