@@ -87,5 +87,7 @@ The default home is `$XDG_CACHE_HOME/deptime`, else `~/.cache/deptime` (override
   - takes the listing's icon from `plugin.json`'s `icon` field (`./.claude-plugin/icon.png`, 1024 px, from `docs/assets/deptime-icon.svg`); the docs don't say whether it can change after the first submission;
   - shows the plugin's README as the listing, which must say what the plugin runs, sends and fetches.
   Failed Bash commands fire `PostToolUseFailure`.
+  A command hook with `"shell": "bash"` runs in Git Bash on Windows (2.1.318, PR #73) and in bash elsewhere
+  (2.1.330); it gets `CLAUDE_PLUGIN_ROOT` in its environment.
 - **GitHub Actions and Dependabot (checked 2026-11-15):** a `pull_request` run Dependabot triggers gets a read-only `GITHUB_TOKEN` and no secrets; a `workflow_run` run it triggers can have write permissions. `gh pr comment --edit-last --create-if-none` (gh 2.89).
 - **Claude Code instruction files (2.1.322):** with no `CLAUDE.md`, a project's `AGENTS.md` loads in its place (the `instructionFiles` setting); the import in `CLAUDE.md` also covers older versions and setups that turn that off.

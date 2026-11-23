@@ -187,6 +187,8 @@ in-sample run flags 0 of 3,291 working uses and fails no pull request without a 
   them); the README no longer implies DepTime checks the signature; AGENTS.md agrees with CHANGELOG on descriptions.
 - [x] **DT-OSS-25** (2026-11-22, PR #72 by flipcyde101, audit G8): CI runs once per change: every branch on push,
   not tags; a pull request's own run only for forks.
+- [x] **DT-OSS-26** (2026-11-23, PR #73 by flipcyde101, audit G10): the Claude Code hint hook finds a real Python
+  on Windows (skipping Store aliases) and stays silent without one.
 
 **Phase 4, the fix (the model's part, outside DepTime): done.** DT-QA-27 met its bar on broken updates nobody had
 seen (`bench/agent-fix/qa27/results-2026-11-17.md`). Held from it: DepTime doesn't check a pydantic model's required
