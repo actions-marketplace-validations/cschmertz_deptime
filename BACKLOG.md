@@ -96,8 +96,9 @@ What still needs a person, about once a month:
 In order. The first line of each phase is what it delivers.
 
 **Coverage: are 53 packages enough?**
-- [ ] **DT-QA-28**: how often a real Python dependency update is to a covered package, on Dependabot's pull requests
-  with no filter by name; decides whether coverage grows, protocol first (`bench/coverage-share/`) · `P1` `S`
+- [x] **DT-QA-28** (2026-11-23): 31.7% of the major library updates in 12,766 Dependabot Python pull requests are to
+  a covered package (bar 60%, missed); the protocol's shortlist of 15 would make it 64.0%, pillow alone 47.3%
+  (`bench/coverage-share/results-2026-11-23.md`). Adding them is DT-DATA-86 to DT-DATA-100, under Later.
 
 Phases 2 and 3 (the command and the GitHub Action) shipped in 0.2.0. DT-QA-22 met every bar on real update pull
 requests; its three wrong answers are fixed in the published index (DT-CORE-72, DT-DATA-82, DT-DATA-51: a second,
@@ -391,6 +392,27 @@ Known gaps, most with a case kept as `known_gap` in the benchmark. None is sched
 - Parked as before: an npm/TypeScript index, a bulk dataset export, MCP resources for rename maps.
 
 ## Later
+
+**Cover DT-QA-28's shortlist** (proposed; each needs its build time and download size measured first, and the
+maintainer's call on the download):
+
+| ID | Package | Major pairs it adds to DT-QA-28's C |
+|---|---|---|
+| DT-DATA-86 | pillow | 338 |
+| DT-DATA-87 | uvicorn | 99 |
+| DT-DATA-88 | cryptography | 59 |
+| DT-DATA-89 | oauthlib | 56 |
+| DT-DATA-90 | gunicorn | 37 |
+| DT-DATA-91 | python-dateutil | 30 |
+| DT-DATA-92 | twisted | 20 |
+| DT-DATA-93 | pytest-asyncio | 19 |
+| DT-DATA-94 | websockets | 18 |
+| DT-DATA-95 | pypdf | 17 |
+| DT-DATA-96 | tornado | 4 |
+| DT-DATA-97 | anyio | 3 |
+| DT-DATA-98 | playwright | 0 |
+| DT-DATA-99 | pygments | 0 |
+| DT-DATA-100 | sentry-sdk | 0 |
 
 - **DT-OSS-19** (proposed): ship the survey's rename checker as a contributor tool: for "old name → new name" pairs,
   whether the index already answers each, can't take it, or would gain it, so a hint PR is checked before review.
