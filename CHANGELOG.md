@@ -70,6 +70,11 @@ are data: they can grow in any release.)
 - The Docker image's two base images (Python and uv) are pinned by digest, and Dependabot updates the pins
   weekly (DT-OSS-24).
 
+### Fixed
+- The Claude Code plugin's hint hook works on Windows: it uses the first real `python.exe` or `python3.exe` on
+  PATH, skips the Microsoft Store's stand-ins, and stays silent with no Python instead of failing after every
+  Bash command (DT-OSS-26, #73).
+
 ## [1.1.6] - 2026-11-22
 
 ### Added
