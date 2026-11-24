@@ -303,6 +303,11 @@ import_names = ["uvicorn"]
 tier = "B"
 
 [[package]]
+name = "gunicorn"
+import_names = ["gunicorn"]
+tier = "B"
+
+[[package]]
 name = "httpx"
 import_names = ["httpx"]
 tier = "B"

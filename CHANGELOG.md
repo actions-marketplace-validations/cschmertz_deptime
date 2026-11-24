@@ -76,6 +76,8 @@ are data: they can grow in any release.)
   misname them, as cryptography's do for its Rust core (DT-DATA-88).
 - oauthlib is covered, 3.3.0 to 4.0.1: the upgrade check finds 4.0.0's removed `RevocationEndpoint(enable_jsonp=)`
   (DT-DATA-89).
+- gunicorn is covered, 21.0.0 to 27.0.1: the upgrade check finds 26.0.0's removed eventlet worker
+  (`gunicorn.workers.geventlet`) and 24.0.0's `Arbiter.handle_chld` losing its arguments (DT-DATA-90).
 - Migration hints for qdrant-client, from its 1.16.0 release notes: `add` and `query` on `QdrantClient` and
   `AsyncQdrantClient` (removed in 1.19.0) → `upsert` and `query_points` (#76).
 
