@@ -107,6 +107,9 @@ In order. The first line of each phase is what it delivers.
 - [x] **DT-DATA-88** (2026-11-24): cryptography, 39.0.0 to 50.0.2 (52 releases): the `.xz` grows 162 KB (0.31%), its
   build job takes 63 s. Its Rust core's stubs misname some arguments, so `no_params` in `coverage.toml` keeps those
   names and leaves their arguments unknown; 11 curated hints. Its `utils.deprecated(...)` calls aren't read.
+- [x] **DT-DATA-89** (2026-11-24): oauthlib, 3.3.0 to 4.0.1 (4 releases; 3.2 ended in 2022): the `.xz` grows 35 KB
+  (0.07%), its build job takes 17 s. No new code or hints. `callback=` passed to `prepare_token_revocation_request`
+  still reads as accepted at 4.0 (a `**kwargs` key the body rejects): held.
 
 Phases 2 and 3 (the command and the GitHub Action) shipped in 0.2.0. DT-QA-22 met every bar on real update pull
 requests; its three wrong answers are fixed in the published index (DT-CORE-72, DT-DATA-82, DT-DATA-51: a second,
@@ -406,7 +409,6 @@ maintainer's call on the download):
 
 | ID | Package | Major pairs it adds to DT-QA-28's C |
 |---|---|---|
-| DT-DATA-89 | oauthlib | 56 |
 | DT-DATA-90 | gunicorn | 37 |
 | DT-DATA-91 | python-dateutil | 30 |
 | DT-DATA-92 | twisted | 20 |

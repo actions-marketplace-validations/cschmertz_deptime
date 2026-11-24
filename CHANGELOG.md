@@ -74,6 +74,8 @@ are data: they can grow in any release.)
   `subject`, `validation_time` and `max_chain_depth` → `policy` (both removed in 46.0.0). A `no_params` key in
   `coverage.toml` lists modules whose functions are recorded without their arguments, for hand-written stubs that
   misname them, as cryptography's do for its Rust core (DT-DATA-88).
+- oauthlib is covered, 3.3.0 to 4.0.1: the upgrade check finds 4.0.0's removed `RevocationEndpoint(enable_jsonp=)`
+  (DT-DATA-89).
 - Migration hints for qdrant-client, from its 1.16.0 release notes: `add` and `query` on `QdrantClient` and
   `AsyncQdrantClient` (removed in 1.19.0) → `upsert` and `query_points` (#76).
 

@@ -428,6 +428,11 @@ notes = "Compiled core in Rust, described by hand-written stubs. Its `utils.depr
 no_params = ["cryptography.hazmat.bindings._rust"]
 
 [[package]]
+name = "oauthlib"
+import_names = ["oauthlib"]
+tier = "B"
+
+[[package]]
 name = "aiohttp"
 import_names = ["aiohttp"]
 tier = "B"
