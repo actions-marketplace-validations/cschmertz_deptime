@@ -113,6 +113,13 @@ In order. The first line of each phase is what it delivers.
 - [x] **DT-DATA-90** (2026-11-24): gunicorn, 21.0.0 to 27.0.1 (21 releases): the `.xz` grows 85 KB (0.16%), its
   build job takes 31 s. No new code or hints (the eventlet worker's removal names three alternatives). The worker a
   project picks in its config (`worker_class = "eventlet"`) is a string, which isn't read.
+- [x] **DT-DATA-101, DT-DATA-102** (2026-11-24): names a module binds by unpacking (`MO, TU, WE, ... = weekdays`) and
+  attributes `__init__` sets through the class's own methods are read. A name only these find never reads removed while
+  its class or module stays (it is dropped instead), so it can't make a false break, for old clients too. 105 removals
+  and 36 kind changes of names that are still there go (49 and 36 in sqlalchemy 2.0). Snapshot format 31.
+- [x] **DT-DATA-91** (2026-11-24): python-dateutil, 2.9.0 to 4.0.0 (4 releases), which needed DT-DATA-101 and 102:
+  the `.xz` grows 85 KB (0.16%) with them. 4 curated hints for 3.0's `tz.TZPATHS` → `tz.TZPATH` and `tz.reset_tzpath`.
+  A call on the removed list (`tz.TZPATHS.insert(...)`) gets no hint in the upgrade check: held.
 
 Phases 2 and 3 (the command and the GitHub Action) shipped in 0.2.0. DT-QA-22 met every bar on real update pull
 requests; its three wrong answers are fixed in the published index (DT-CORE-72, DT-DATA-82, DT-DATA-51: a second,
@@ -412,7 +419,6 @@ maintainer's call on the download):
 
 | ID | Package | Major pairs it adds to DT-QA-28's C |
 |---|---|---|
-| DT-DATA-91 | python-dateutil | 30 |
 | DT-DATA-92 | twisted | 20 |
 | DT-DATA-93 | pytest-asyncio | 19 |
 | DT-DATA-94 | websockets | 18 |
