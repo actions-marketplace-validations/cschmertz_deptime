@@ -68,6 +68,8 @@ are data: they can grow in any release.)
   binds as its own names on import, as pillow does for `Image.LANCZOS` and `Image.FLIP_LEFT_RIGHT` (DT-DATA-86).
 - uvicorn is covered, 0.21.0 to 0.54.0, with migration hints for `Config.setup_event_loop` → `get_loop_factory`
   (removed in 0.36.0) and `LifespanOn.error_occured` → `error_occurred` (renamed in 0.41.0) (DT-DATA-87).
+- Migration hints for qdrant-client, from its 1.16.0 release notes: `add` and `query` on `QdrantClient` and
+  `AsyncQdrantClient` (removed in 1.19.0) → `upsert` and `query_points` (#76).
 
 ## [1.1.7] - 2026-11-23
 
