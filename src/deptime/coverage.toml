@@ -18,6 +18,8 @@
 #                  deptime 0.1.5 and older can't read. `false` stores every member under every class.
 # `internal_names` = private import roots the wheel also installs, recorded only as internal names, never as public
 #                  API; tracebacks from them map to the package (DT-DATA-62: pytest's `_pytest`).
+# `no_params`    = modules whose callables are recorded without their parameters, so their arguments are unknown
+#                  (DT-DATA-88): hand-written stubs for compiled code whose argument names can differ from the code's.
 # `[[package.served]]` = names the package serves through its own import machinery rather than by binding them
 #                  (DT-DATA-52), in each release whose `file` matches the regular expression `when`: `module` as the
 #                  module `serves`, with all its names (`{part}` matches one dotted part, the same in both), or in
@@ -415,6 +417,15 @@ namespace_skip = ["selenium.webdriver.common.devtools"]
 name = "urllib3"
 import_names = ["urllib3"]
 tier = "B"
+
+[[package]]
+name = "cryptography"
+import_names = ["cryptography"]
+tier = "B"
+notes = "Compiled core in Rust, described by hand-written stubs. Its `utils.deprecated(...)` calls aren't read, so its deprecations don't show; removals do."
+# The stubs name some arguments differently from the Rust: 43.0's `AESGCM.generate_key(key_size)` takes
+# `bit_length`, as 42.0's Python did. Their names are kept, their arguments left unknown.
+no_params = ["cryptography.hazmat.bindings._rust"]
 
 [[package]]
 name = "aiohttp"
