@@ -21,8 +21,8 @@ which of a project's code a dependency update breaks. Everything done before 202
 - **Released:** 1.1.3 (2026-11-21) is on PyPI, the MCP Registry and GitHub: the six tools, the upgrade check (a
   command, a GitHub Action, an MCP tool and a Claude Code plugin command), and the 1.x promise in CHANGELOG.md's
   versioning section: the contract only grows.
-- **Index:** 54 packages and 6,900 releases on 2026-11-23 (`SNAPSHOT_FORMAT` 29, schema 2); `index.sqlite.xz` is
-  52.7 MB and the `.gz` 81.2 MB. `build-index` runs at 04:17 and 16:17 UTC, replaces the rolling `index` release and
+- **Index:** 55 packages and 6,960 releases on 2026-11-24 (`SNAPSHOT_FORMAT` 29, schema 2); `index.sqlite.xz` is
+  52.7 MB and the `.gz` 81.4 MB. `build-index` runs at 04:17 and 16:17 UTC, replaces the rolling `index` release and
   signs it. A build with no extraction change usually takes under 20 minutes; a `SNAPSHOT_FORMAT` bump means one cold
   build of about 3 hours (format 27's: 2 h 48 min).
 - **Checks that run without anyone:** `ci` on every push (693 offline tests), and `bench` on every code change and
@@ -102,6 +102,8 @@ In order. The first line of each phase is what it delivers.
 - [x] **DT-DATA-86** (2026-11-23): pillow, 9.4.0 to 13.0.0 (18 releases): the `.xz` grows 80 KB (0.15%), its build
   job takes 38 s. A served rule can name the enums whose members a module binds on import (`members_of`); 15 curated
   hints from its release notes.
+- [x] **DT-DATA-87** (2026-11-23): uvicorn, 0.21.0 to 0.54.0 (59 releases): the `.xz` doesn't grow and the `.gz` grows
+  81 KB; its build job takes 36 s. No new code: 2 curated hints, for 0.36's `setup_event_loop` and 0.41's rename.
 
 Phases 2 and 3 (the command and the GitHub Action) shipped in 0.2.0. DT-QA-22 met every bar on real update pull
 requests; its three wrong answers are fixed in the published index (DT-CORE-72, DT-DATA-82, DT-DATA-51: a second,
@@ -401,7 +403,6 @@ maintainer's call on the download):
 
 | ID | Package | Major pairs it adds to DT-QA-28's C |
 |---|---|---|
-| DT-DATA-87 | uvicorn | 99 |
 | DT-DATA-88 | cryptography | 59 |
 | DT-DATA-89 | oauthlib | 56 |
 | DT-DATA-90 | gunicorn | 37 |
