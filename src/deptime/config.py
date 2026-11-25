@@ -233,6 +233,10 @@ class PackageSpec:
     # Private import roots the wheel also installs, recorded as internal names only, never public API (DT-DATA-62):
     # pytest's `_pytest`, whose modules plugins import. Tracebacks from them map to the package too.
     internal_names: tuple[str, ...] = ()
+    # Modules whose callables are recorded without their parameters (DT-DATA-88): hand-written stubs for compiled
+    # code, whose argument names can differ from the code's. cryptography 43's stub names `AESGCM.generate_key`'s
+    # argument `key_size`; the Rust takes `bit_length`.
+    no_params: tuple[str, ...] = ()
 
     def alias_version(self, installed: dict[str, str]) -> tuple[str, str] | None:
         """(distribution, version) of the first `installed_as` entry that `installed` lists in its range."""
@@ -313,6 +317,7 @@ def load_coverage(path: Path | None = None) -> Coverage:
                 for r in p.get("served", ())
             ),
             internal_names=tuple(p.get("internal_names", ())),
+            no_params=tuple(p.get("no_params", ())),
         )
         for p in raw.get("package", [])
     )

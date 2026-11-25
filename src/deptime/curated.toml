@@ -3899,6 +3899,87 @@ target = "uvicorn.lifespan.on.LifespanOn.error_occurred"
 quote = "Rename `LifespanOn.error_occured` to `error_occurred` (#2776)"
 url = "https://github.com/Kludex/uvicorn/blob/0.41.0/docs/release-notes.md"
 
+# cryptography (DT-DATA-88)
+# 40.0 deprecated the types module's upper-case key type aliases and 49.0 removed them; 45.0 deprecated the
+# verifiers' subject, validation_time and max_chain_depth for `policy`, and 46.0 removed them with
+# `CertificateSigningRequest.get_attribute_for_oid`.
+[[hint]]
+package = "cryptography"
+path = "cryptography.hazmat.primitives.asymmetric.types.PUBLIC_KEY_TYPES"
+target = "cryptography.hazmat.primitives.asymmetric.types.PublicKeyTypes"
+quote = '"Use PublicKeyTypes instead", utils.DeprecatedIn40, name="PUBLIC_KEY_TYPES"'
+url = "https://github.com/pyca/cryptography/blob/40.0.0/src/cryptography/hazmat/primitives/asymmetric/types.py#L30-L37"
+
+[[hint]]
+package = "cryptography"
+path = "cryptography.hazmat.primitives.asymmetric.types.PRIVATE_KEY_TYPES"
+target = "cryptography.hazmat.primitives.asymmetric.types.PrivateKeyTypes"
+quote = '"Use PrivateKeyTypes instead", utils.DeprecatedIn40, name="PRIVATE_KEY_TYPES"'
+url = "https://github.com/pyca/cryptography/blob/40.0.0/src/cryptography/hazmat/primitives/asymmetric/types.py#L49-L56"
+
+[[hint]]
+package = "cryptography"
+path = "cryptography.hazmat.primitives.asymmetric.types.CERTIFICATE_PRIVATE_KEY_TYPES"
+target = "cryptography.hazmat.primitives.asymmetric.types.CertificateIssuerPrivateKeyTypes"
+quote = '"Use CertificateIssuerPrivateKeyTypes instead", utils.DeprecatedIn40, name="CERTIFICATE_PRIVATE_KEY_TYPES"'
+url = "https://github.com/pyca/cryptography/blob/40.0.0/src/cryptography/hazmat/primitives/asymmetric/types.py#L66-L73"
+
+[[hint]]
+package = "cryptography"
+path = "cryptography.hazmat.primitives.asymmetric.types.CERTIFICATE_ISSUER_PUBLIC_KEY_TYPES"
+target = "cryptography.hazmat.primitives.asymmetric.types.CertificateIssuerPublicKeyTypes"
+quote = '"Use CertificateIssuerPublicKeyTypes instead", utils.DeprecatedIn40, name="CERTIFICATE_ISSUER_PUBLIC_KEY_TYPES"'
+url = "https://github.com/pyca/cryptography/blob/40.0.0/src/cryptography/hazmat/primitives/asymmetric/types.py#L83-L90"
+
+[[hint]]
+package = "cryptography"
+path = "cryptography.hazmat.primitives.asymmetric.types.CERTIFICATE_PUBLIC_KEY_TYPES"
+target = "cryptography.hazmat.primitives.asymmetric.types.CertificatePublicKeyTypes"
+quote = '"Use CertificatePublicKeyTypes instead", utils.DeprecatedIn40, name="CERTIFICATE_PUBLIC_KEY_TYPES"'
+url = "https://github.com/pyca/cryptography/blob/40.0.0/src/cryptography/hazmat/primitives/asymmetric/types.py#L102-L109"
+
+[[hint]]
+package = "cryptography"
+path = "cryptography.x509.CertificateSigningRequest.get_attribute_for_oid"
+target = "cryptography.x509.Attributes.get_attribute_for_oid"
+quote = "Removed the deprecated ``get_attribute_for_oid`` method on :class:`~cryptography.x509.CertificateSigningRequest`. Users should use :meth:`~cryptography.x509.Attributes.get_attribute_for_oid` instead."
+url = "https://github.com/pyca/cryptography/blob/46.0.0/CHANGELOG.rst"
+
+[[hint]]
+package = "cryptography"
+path = "cryptography.x509.verification.ServerVerifier.subject"
+target = "cryptography.x509.verification.ServerVerifier.policy"
+quote = "Deprecated the ``subject``, ``verification_time`` and ``max_chain_depth`` properties on :class:`~cryptography.x509.verification.ClientVerifier` and :class:`~cryptography.x509.verification.ServerVerifier` in favor of a new ``policy`` property."
+url = "https://github.com/pyca/cryptography/blob/46.0.0/CHANGELOG.rst"
+
+[[hint]]
+package = "cryptography"
+path = "cryptography.x509.verification.ServerVerifier.validation_time"
+target = "cryptography.x509.verification.ServerVerifier.policy"
+quote = "Deprecated the ``subject``, ``verification_time`` and ``max_chain_depth`` properties on :class:`~cryptography.x509.verification.ClientVerifier` and :class:`~cryptography.x509.verification.ServerVerifier` in favor of a new ``policy`` property."
+url = "https://github.com/pyca/cryptography/blob/46.0.0/CHANGELOG.rst"
+
+[[hint]]
+package = "cryptography"
+path = "cryptography.x509.verification.ServerVerifier.max_chain_depth"
+target = "cryptography.x509.verification.ServerVerifier.policy"
+quote = "Deprecated the ``subject``, ``verification_time`` and ``max_chain_depth`` properties on :class:`~cryptography.x509.verification.ClientVerifier` and :class:`~cryptography.x509.verification.ServerVerifier` in favor of a new ``policy`` property."
+url = "https://github.com/pyca/cryptography/blob/46.0.0/CHANGELOG.rst"
+
+[[hint]]
+package = "cryptography"
+path = "cryptography.x509.verification.ClientVerifier.validation_time"
+target = "cryptography.x509.verification.ClientVerifier.policy"
+quote = "Deprecated the ``subject``, ``verification_time`` and ``max_chain_depth`` properties on :class:`~cryptography.x509.verification.ClientVerifier` and :class:`~cryptography.x509.verification.ServerVerifier` in favor of a new ``policy`` property."
+url = "https://github.com/pyca/cryptography/blob/46.0.0/CHANGELOG.rst"
+
+[[hint]]
+package = "cryptography"
+path = "cryptography.x509.verification.ClientVerifier.max_chain_depth"
+target = "cryptography.x509.verification.ClientVerifier.policy"
+quote = "Deprecated the ``subject``, ``verification_time`` and ``max_chain_depth`` properties on :class:`~cryptography.x509.verification.ClientVerifier` and :class:`~cryptography.x509.verification.ServerVerifier` in favor of a new ``policy`` property."
+url = "https://github.com/pyca/cryptography/blob/46.0.0/CHANGELOG.rst"
+
 # qdrant-client
 # add and query deprecated in 1.16.0 and removed in 1.19.0; query_batch omitted because no direct replacement is stated.
 [[hint]]

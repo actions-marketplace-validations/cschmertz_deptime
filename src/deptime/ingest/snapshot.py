@@ -185,6 +185,8 @@ class ApiSnapshot:
     served: list[dict[str, Any]] = field(default_factory=list)
     # Private import roots recorded as internal names only (coverage.toml `internal_names`, DT-DATA-62).
     internal_names: list[str] = field(default_factory=list)
+    # Modules whose callables are recorded without their parameters (coverage.toml `no_params`, DT-DATA-88).
+    no_params: list[str] = field(default_factory=list)
 
     def save(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -5130,6 +5132,7 @@ def build_snapshot(
     siblings: Sequence[tuple[Path, list[str]]] = (),
     served: Sequence[ServedRule] = (),
     internal_names: Sequence[str] = (),
+    no_params: Sequence[str] = (),
 ) -> ApiSnapshot:
     """Snapshot the public API under `search_path`, a private extraction of one release: folders without
     `__init__.py` get an empty one first (see `add_namespace_inits`). `own_members` records each class's own
@@ -5140,7 +5143,9 @@ def build_snapshot(
     and each release pins `mcp-types` at its own version). Their names are recorded only where the release's own
     modules bind them. `served`: the package's coverage.toml rules for names it serves through its import
     machinery (DT-DATA-52), applied after the walk. `internal_names`: private import roots whose modules are
-    recorded as internal names only (DT-DATA-62: pytest's `_pytest`)."""
+    recorded as internal names only (DT-DATA-62: pytest's `_pytest`). `no_params`: modules whose callables are
+    recorded without their parameters (DT-DATA-88: cryptography's Rust bindings, whose stubs name some arguments
+    differently from the code)."""
     snap = ApiSnapshot(
         package=package,
         version=version,
@@ -5148,6 +5153,7 @@ def build_snapshot(
         namespace_skip=list(namespace_skip),
         own_members=own_members,
         internal_names=list(internal_names),
+        no_params=list(no_params),
     )
     roots = [search_path.joinpath(*n.split(".")) for n in import_names]
     bare = [
@@ -5228,10 +5234,32 @@ def build_snapshot(
         apply_served(snap, served, search_path)
         for path in [p for p in snap.bound if p in snap.symbols]:  # public under another walk
             del snap.bound[path]
+        drop_params(snap, no_params)
     finally:
         _READINGS = None
         _clear_griffe_caches()
     return snap
+
+
+def drop_params(snap: ApiSnapshot, modules: Sequence[str]) -> None:
+    """Forget the parameters of every callable defined under `modules` (coverage.toml `no_params`, DT-DATA-88):
+    their arguments are then unknown, not read from stubs that can name them wrongly. cryptography 43.0's stub
+    declares `AESGCM.generate_key(key_size)`; the Rust it describes takes `bit_length`, as 42.0's Python did, so
+    the stub made `generate_key(bit_length=256)` read as broken by the update."""
+    if not modules:
+        return
+
+    def cleared(records: dict[str, SymbolRecord]) -> None:
+        for key, rec in records.items():
+            home = rec.canonical or rec.path
+            if rec.params is not None and any(_within(home, m) for m in modules):
+                records[key] = replace(rec, params=None)
+
+    for records in (snap.symbols, snap.bound, snap.internal):
+        cleared(records)
+    for cls in snap.classes.values():
+        cleared(cls.members)
+        cleared(cls.internal)
 
 
 def _part_pattern(pattern: str) -> re.Pattern[str]:

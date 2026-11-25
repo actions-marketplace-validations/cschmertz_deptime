@@ -77,6 +77,15 @@ def test_coverage_file_sets_whole_series(tmp_path):
     assert not load_coverage(cov).policy.whole_series  # absent: first and last release only, as before
 
 
+def test_coverage_file_sets_no_params(tmp_path):
+    # DT-DATA-88: the modules whose callables are recorded without their parameters.
+    cov = tmp_path / "coverage.toml"
+    cov.write_text('[[package]]\nname = "cg"\nno_params = ["cg._rust"]\n\n[[package]]\nname = "other"\n')
+    assert load_coverage(cov).get("cg").no_params == ("cg._rust",)
+    assert load_coverage(cov).get("other").no_params == ()
+    assert load_coverage().get("cryptography").no_params == ("cryptography.hazmat.bindings._rust",)
+
+
 def test_pick_file_prefers_pure_wheel_then_any_wheel_then_sdist():
     t = datetime(2026, 1, 1, tzinfo=UTC)
     sdist = ReleaseFile("pkg-1.0.tar.gz", "u", None, t, False, "sdist")

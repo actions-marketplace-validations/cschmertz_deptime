@@ -21,8 +21,8 @@ which of a project's code a dependency update breaks. Everything done before 202
 - **Released:** 1.1.3 (2026-11-21) is on PyPI, the MCP Registry and GitHub: the six tools, the upgrade check (a
   command, a GitHub Action, an MCP tool and a Claude Code plugin command), and the 1.x promise in CHANGELOG.md's
   versioning section: the contract only grows.
-- **Index:** 55 packages and 6,960 releases on 2026-11-24 (`SNAPSHOT_FORMAT` 29, schema 2); `index.sqlite.xz` is
-  52.7 MB and the `.gz` 81.4 MB. `build-index` runs at 04:17 and 16:17 UTC, replaces the rolling `index` release and
+- **Index:** 57 packages and 7,026 releases on 2026-11-24 (`SNAPSHOT_FORMAT` 29, schema 2); `index.sqlite.xz` is
+  53.0 MB and the `.gz` 81.8 MB. `build-index` runs at 04:17 and 16:17 UTC, replaces the rolling `index` release and
   signs it. A build with no extraction change usually takes under 20 minutes; a `SNAPSHOT_FORMAT` bump means one cold
   build of about 3 hours (format 27's: 2 h 48 min).
 - **Checks that run without anyone:** `ci` on every push (693 offline tests), and `bench` on every code change and
@@ -104,6 +104,15 @@ In order. The first line of each phase is what it delivers.
   hints from its release notes.
 - [x] **DT-DATA-87** (2026-11-23): uvicorn, 0.21.0 to 0.54.0 (59 releases): the `.xz` doesn't grow and the `.gz` grows
   81 KB; its build job takes 36 s. No new code: 2 curated hints, for 0.36's `setup_event_loop` and 0.41's rename.
+- [x] **DT-DATA-88** (2026-11-24): cryptography, 39.0.0 to 50.0.2 (52 releases): the `.xz` grows 162 KB (0.31%), its
+  build job takes 63 s. Its Rust core's stubs misname some arguments, so `no_params` in `coverage.toml` keeps those
+  names and leaves their arguments unknown; 11 curated hints. Its `utils.deprecated(...)` calls aren't read.
+- [x] **DT-DATA-89** (2026-11-24): oauthlib, 3.3.0 to 4.0.1 (4 releases; 3.2 ended in 2022): the `.xz` grows 35 KB
+  (0.07%), its build job takes 17 s. No new code or hints. `callback=` passed to `prepare_token_revocation_request`
+  still reads as accepted at 4.0 (a `**kwargs` key the body rejects): held.
+- [x] **DT-DATA-90** (2026-11-24): gunicorn, 21.0.0 to 27.0.1 (21 releases): the `.xz` grows 85 KB (0.16%), its
+  build job takes 31 s. No new code or hints (the eventlet worker's removal names three alternatives). The worker a
+  project picks in its config (`worker_class = "eventlet"`) is a string, which isn't read.
 
 Phases 2 and 3 (the command and the GitHub Action) shipped in 0.2.0. DT-QA-22 met every bar on real update pull
 requests; its three wrong answers are fixed in the published index (DT-CORE-72, DT-DATA-82, DT-DATA-51: a second,
@@ -403,9 +412,6 @@ maintainer's call on the download):
 
 | ID | Package | Major pairs it adds to DT-QA-28's C |
 |---|---|---|
-| DT-DATA-88 | cryptography | 59 |
-| DT-DATA-89 | oauthlib | 56 |
-| DT-DATA-90 | gunicorn | 37 |
 | DT-DATA-91 | python-dateutil | 30 |
 | DT-DATA-92 | twisted | 20 |
 | DT-DATA-93 | pytest-asyncio | 19 |

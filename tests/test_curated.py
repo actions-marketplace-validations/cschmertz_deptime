@@ -54,6 +54,7 @@ def _last_name(path: str) -> str:
 SPELLED = {
     "completion_stream": "completions_stream",  # mistralai's MIGRATION.md, for `MistralClient.completion_stream`
     "FineTunes": "fine_tunes",  # openai's migration guide: `client.fine_tunes` is `openai.resources.FineTunes`
+    "validation_time": "verification_time",  # cryptography 45.0's changelog, for the verifiers' `validation_time`
 }
 
 

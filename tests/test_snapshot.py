@@ -11,6 +11,7 @@ import griffe
 import pytest
 
 from deptime.ingest import snapshot
+from deptime.ingest.diff import diff_snapshots
 from deptime.ingest.snapshot import ApiSnapshot, build_snapshot, external_star_imports
 
 FILES = {
@@ -3264,6 +3265,40 @@ def test_a_lazy_loaders_private_names_are_internal(tmp_path):
     assert "hub._CACHED_NO_EXIST" not in snap.symbols
     assert snap.symbols["hub.hf_hub_download"].canonical == "hub.file_download.hf_hub_download"
     assert snap.symbols["hub.HfApi"].kind == "class"
+
+
+def test_no_params_leaves_the_arguments_of_callables_under_its_modules_unknown(tmp_path):
+    # DT-DATA-88: cryptography 43.0's hand-written stub declares `AESGCM.generate_key(key_size)`; the Rust takes
+    # `bit_length`, as 42.0's Python did. Read from the stub, the update broke `generate_key(bit_length=256)`.
+    python = {
+        "cg/__init__.py": "",
+        "cg/aead.py": "class AESGCM:\n    @staticmethod\n    def generate_key(bit_length: int) -> bytes: ...\n",
+        "cg/keys.py": "def load_key(data, password, backend=None): ...\n",
+    }
+    rust = {
+        "cg/__init__.py": "",
+        "cg/_rust/__init__.pyi": (
+            "class AESGCM:\n    @staticmethod\n    def generate_key(key_size: int) -> bytes: ...\n\n"
+            "def load_key(data: bytes, password: bytes | None) -> object: ...\n"
+        ),
+        "cg/aead.py": "from cg._rust import AESGCM as AESGCM\n",
+        "cg/keys.py": "from cg._rust import load_key as load_key\n\n\ndef helper(data, *, strict=False): ...\n",
+    }
+    old = build_snapshot("cg", "42.0", ["cg"], _write(tmp_path / "42", python), own_members=True)
+    new = build_snapshot(
+        "cg", "43.0", ["cg"], _write(tmp_path / "43", rust), own_members=True, no_params=["cg._rust"]
+    )
+    assert new.no_params == ["cg._rust"]
+    assert new.classes["cg._rust.AESGCM"].members["generate_key"].params is None
+    assert new.symbols["cg.keys.load_key"].params is None
+    assert [p["name"] for p in new.symbols["cg.keys.helper"].params] == ["data", "strict"]  # Python: read
+    read = build_snapshot("cg", "43.0", ["cg"], tmp_path / "43", own_members=True)
+    assert [p["name"] for p in read.classes["cg._rust.AESGCM"].members["generate_key"].params] == ["key_size"]
+    params = [e for e in diff_snapshots(old, new) if e.kind.startswith("param")]
+    assert params == []
+    out = tmp_path / "s.json.gz"
+    new.save(out)
+    assert ApiSnapshot.load(out).no_params == ["cg._rust"]
 
 
 def test_snapshot_roundtrip_keeps_internal_names(tmp_path):
