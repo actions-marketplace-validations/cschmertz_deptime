@@ -39,7 +39,7 @@ from deptime.ingest.replacements import (
 if TYPE_CHECKING:
     from deptime.config import ServedRule
 
-SNAPSHOT_FORMAT = 29  # bump when extraction changes: cached snapshots in another format are rebuilt
+SNAPSHOT_FORMAT = 31  # bump when extraction changes: cached snapshots in another format are rebuilt
 MAX_DEPTH = 12  # guards pathological re-export cycles
 
 DEPRECATED_DECORATOR_RE = re.compile(r"^(?:[\w.]+\.)?deprecated\b(?:\(.*\))?$", re.S)
@@ -80,6 +80,10 @@ class SymbolRecord:
     deprecated_params: dict[str, str] | None = None
     # What a function whose body only raises raises, `Type: message` (DT-DATA-67): calling it fails.
     raises: str | None = None
+    # Found by DepTime's own readers, not griffe (DT-DATA-101, DT-DATA-102): a name bound by unpacking, or an
+    # attribute a method `__init__` calls sets. Assembly keeps it only where it doesn't vanish later (`unsteady`).
+    # Not part of what the record says, so it never splits a span or makes a change.
+    indirect: bool = field(default=False, compare=False)
 
 
 # The kind of a class's own member that hides the same name in its bases but isn't recorded: an alias griffe can't
@@ -122,6 +126,14 @@ def resolve_member(classes: dict[str, ClassRecord], cls: str, name: str) -> Symb
         if member is not None:
             return None if member.kind == HIDDEN else member
     return None
+
+
+def _saved(rec: SymbolRecord) -> dict[str, Any]:
+    """A record as a snapshot file stores it: `indirect` only when set, as most records aren't."""
+    out = asdict(rec)
+    if not rec.indirect:
+        del out["indirect"]
+    return out
 
 
 def member_names(classes: dict[str, ClassRecord], cls: str) -> list[str]:
@@ -191,15 +203,15 @@ class ApiSnapshot:
     def save(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = asdict(self)
-        payload["symbols"] = [asdict(s) for s in self.symbols.values()]
-        payload["internal"] = [asdict(s) for s in self.internal.values()]
-        payload["bound"] = [asdict(s) for s in self.bound.values()]
+        payload["symbols"] = [_saved(s) for s in self.symbols.values()]
+        payload["internal"] = [_saved(s) for s in self.internal.values()]
+        payload["bound"] = [_saved(s) for s in self.bound.values()]
         payload["classes"] = [
             {
                 "path": c.path,
                 "mro": c.mro,
-                "members": [asdict(m) for m in c.members.values()],
-                "internal": [asdict(m) for m in c.internal.values()],
+                "members": [_saved(m) for m in c.members.values()],
+                "internal": [_saved(m) for m in c.internal.values()],
                 "external": c.external,
             }
             for c in self.classes.values()
@@ -249,6 +261,23 @@ class ApiSnapshot:
             internal.pop(path, None)
         bound = {path: rec for path, rec in self.bound.items() if path not in public}
         return replace(self, symbols=symbols, internal=internal, bound=bound)
+
+    def without_unsteady(self, unsteady: AbstractSet[tuple[str, ...]]) -> ApiSnapshot:
+        """This snapshot without the `indirect` records `unsteady` names: `(path,)` in `symbols` or `bound`, or
+        `(class, name)` for a class's own member (DT-DATA-101, DT-DATA-102)."""
+        if not unsteady:
+            return self
+
+        def kept(records: dict[str, SymbolRecord]) -> dict[str, SymbolRecord]:
+            return {p: r for p, r in records.items() if not (r.indirect and (p,) in unsteady)}
+
+        classes = {
+            path: replace(
+                c, members={n: m for n, m in c.members.items() if not (m.indirect and (path, n) in unsteady)}
+            )
+            for path, c in self.classes.items()
+        }
+        return replace(self, symbols=kept(self.symbols), bound=kept(self.bound), classes=classes)
 
     def with_own_members(self) -> ApiSnapshot:
         """This snapshot stored with own members (DT-DATA-49). One that isn't, such as a release rebuilt from an
@@ -4755,6 +4784,134 @@ class _CalledGlobals(griffe.Extension):
                     )
 
 
+def _runtime_statements(body: list[ast.stmt]) -> Iterator[ast.stmt]:
+    """A module's top-level statements, and those inside its top-level `if` and `try`, as griffe visits them, except
+    the body of `if TYPE_CHECKING:`, which doesn't run."""
+    for st in body:
+        yield st
+        if isinstance(st, ast.If):
+            if ast.unparse(st.test) not in {"TYPE_CHECKING", "typing.TYPE_CHECKING"}:
+                yield from _runtime_statements(st.body)
+            yield from _runtime_statements(st.orelse)
+        elif isinstance(st, (ast.Try, ast.TryStar)):
+            for part in (st.body, *(h.body for h in st.handlers), st.orelse, st.finalbody):
+                yield from _runtime_statements(part)
+
+
+class _Unpacked(griffe.Extension):
+    """Names a module binds by unpacking (DT-DATA-101). griffe skips an assignment with a tuple or list target, and
+    the plain names chained with it, so python-dateutil's `rrule.DAILY` (`(YEARLY, ..., SECONDLY) =
+    list(range(7))`), `rrule.MO` and `rrule.weekdays` (`MO, TU, ... = weekdays = tuple(...)`) read never seen though
+    `__all__` lists them, and so did sqlalchemy's `sql.selectable.LABEL_STYLE_NONE`. Each becomes an attribute of
+    the module, unless the module binds the name in another way or it is a dunder name: a lazy loader's
+    `__getattr__, __dir__, __all__ = _attach(...)` is read as a lazy loader (`_lazy_attach`). `made` collects the
+    paths of the attributes it adds."""
+
+    def __init__(self, made: set[str]) -> None:
+        super().__init__()
+        self.made = made
+
+    def on_module_members(
+        self, *, node: ast.AST | griffe.ObjectNode, mod: griffe.Module, **kwargs: Any
+    ) -> None:
+        if not isinstance(node, ast.Module):
+            return
+        for st in _runtime_statements(node.body):
+            if not isinstance(st, ast.Assign) or not any(
+                isinstance(t, (ast.Tuple, ast.List)) for t in st.targets
+            ):
+                continue
+            for name in (n for t in st.targets for n in _bound_names(t)):
+                if name in mod.members or (name.startswith("__") and name.endswith("__")):
+                    continue
+                attr = griffe.Attribute(
+                    name, lineno=st.lineno, endlineno=st.end_lineno, runtime=True, analysis="static"
+                )
+                attr.labels.add("module-attribute")
+                mod.set_member(name, attr)
+                self.made.add(attr.path)
+
+
+# Decorators that make a method something other than a plain method called on the instance.
+_NOT_PLAIN_METHOD = frozenset({"property", "cached_property", "staticmethod", "classmethod"})
+
+
+def _self_attributes(func: ast.FunctionDef | ast.AsyncFunctionDef, me: str) -> dict[str, ast.stmt]:
+    """The attributes a method's own body assigns on `me` (its first parameter), `me.x = ...` or `me.x: T = ...`,
+    each with its first assignment."""
+    found: dict[str, ast.stmt] = {}
+    for st in _function_body(func):
+        targets = (
+            st.targets if isinstance(st, ast.Assign) else [st.target] if isinstance(st, ast.AnnAssign) else []
+        )
+        for target in targets:
+            for t in target.elts if isinstance(target, (ast.Tuple, ast.List)) else [target]:
+                if isinstance(t, ast.Attribute) and isinstance(t.value, ast.Name) and t.value.id == me:
+                    found.setdefault(t.attr, st)
+    return found
+
+
+def _self_calls(func: ast.FunctionDef | ast.AsyncFunctionDef, me: str) -> list[str]:
+    """The methods a method's own body calls on `me` (its first parameter): `me.setup(...)`."""
+    return [
+        n.func.attr
+        for st in _function_body(func)
+        for n in _own_nodes(st)
+        if isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Attribute)
+        and isinstance(n.func.value, ast.Name)
+        and n.func.value.id == me
+    ]
+
+
+class _HelperAttributes(griffe.Extension):
+    """Attributes a class's `__init__` sets through its own methods (DT-DATA-102). griffe reads `self.x = ...` in
+    `__init__` only, so an attribute a helper sets when `__init__` calls it read as absent: python-dateutil 3.0's
+    `ZoneInfoFile.zones` and `.metadata`, which 2.9's deprecation message says to use, moved into
+    `_eager_load_tzdata()` and read removed, a false break; starlette's `Response.raw_headers` (`init_headers()`),
+    redis' `PubSub.channels` and aiohttp's `ClientRequest.headers` read missing. This follows `self.<method>(...)`
+    calls from `__init__` to the class's own plain methods, and from those to others, and adds each attribute they
+    set on `self` that the class doesn't have, as griffe adds `__init__`'s. `made` collects their paths."""
+
+    def __init__(self, made: set[str]) -> None:
+        super().__init__()
+        self.made = made
+
+    def on_class_members(
+        self, *, node: ast.AST | griffe.ObjectNode, cls: griffe.Class, **kwargs: Any
+    ) -> None:
+        if not isinstance(node, ast.ClassDef):
+            return
+        methods = {
+            st.name: st
+            for st in node.body
+            if isinstance(st, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and st.args.posonlyargs + st.args.args
+            and not any(ast.unparse(d).rpartition(".")[2] in _NOT_PLAIN_METHOD for d in st.decorator_list)
+        }
+        init = methods.get("__init__")
+        if init is None:
+            return
+        me = lambda func: (func.args.posonlyargs + func.args.args)[0].arg  # noqa: E731
+        todo, seen = _self_calls(init, me(init)), {"__init__"}
+        while todo:
+            name = todo.pop(0)
+            if name in seen or name not in methods:
+                continue
+            seen.add(name)
+            helper = methods[name]
+            for attr_name, st in _self_attributes(helper, me(helper)).items():
+                if attr_name in cls.members:
+                    continue
+                attr = griffe.Attribute(
+                    attr_name, lineno=st.lineno, endlineno=st.end_lineno, runtime=True, analysis="static"
+                )
+                attr.labels.add("instance-attribute")
+                cls.set_member(attr_name, attr)
+                self.made.add(attr.path)
+            todo.extend(_self_calls(helper, me(helper)))
+
+
 class _Rebound(griffe.Extension):
     """A class or function its scope rebinds to a call on itself is still that class or function (DT-DATA-50). griffe
     records `AutoModel = auto_class_update(AutoModel)` as an attribute, so transformers' 41 Auto classes had no
@@ -5169,6 +5326,7 @@ def build_snapshot(
     # With siblings, one collection for the release and them, loaded first, so griffe expands star imports of
     # them. Without, a fresh one per import name, as always.
     shared = (griffe.ModulesCollection(), griffe.LinesCollection()) if siblings else (None, None)
+    made: set[str] = set()  # attributes DepTime's own readers add (DT-DATA-101, DT-DATA-102)
     paths = [str(search_path), *(str(root) for root, _ in siblings)]
 
     def load(name: str, where: list[str]) -> griffe.Object | griffe.Alias:
@@ -5190,6 +5348,8 @@ def build_snapshot(
                 _ImportStructure(),
                 _ImportFallback(),
                 _CalledGlobals(),
+                _Unpacked(made),
+                _HelperAttributes(made),
             ),
         )
         if isinstance(loaded, griffe.Module):
@@ -5235,10 +5395,28 @@ def build_snapshot(
         for path in [p for p in snap.bound if p in snap.symbols]:  # public under another walk
             del snap.bound[path]
         drop_params(snap, no_params)
+        mark_indirect(snap, made)
     finally:
         _READINGS = None
         _clear_griffe_caches()
     return snap
+
+
+def mark_indirect(snap: ApiSnapshot, made: AbstractSet[str]) -> None:
+    """Mark the records of the attributes DepTime's own readers made (`made`, by object path) `indirect`, wherever
+    a public path reaches them: their own path, an import of them, a class's member."""
+    if not made:
+        return
+
+    def marked(records: dict[str, SymbolRecord]) -> None:
+        for key, rec in records.items():
+            if rec.kind == "attribute" and rec.canonical in made:
+                records[key] = replace(rec, indirect=True)
+
+    for records in (snap.symbols, snap.bound):
+        marked(records)
+    for cls in snap.classes.values():
+        marked(cls.members)
 
 
 def drop_params(snap: ApiSnapshot, modules: Sequence[str]) -> None:

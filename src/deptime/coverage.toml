@@ -468,5 +468,10 @@ name = "marshmallow"
 import_names = ["marshmallow"]
 tier = "B"
 
+[[package]]
+name = "python-dateutil"
+import_names = ["dateutil"]
+tier = "B"
+
 # Deliberately skipped for v1: boto3 (generated), torch/tensorflow (compiled), apache-airflow (too large).
 # Stdlib module availability per Python version comes from typeshed's stdlib/VERSIONS (DT-DATA-06).

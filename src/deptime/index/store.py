@@ -63,20 +63,45 @@ def _now() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat()
 
 
-def public_somewhere(snapshots: Sequence[ApiSnapshot | LazySnapshot]) -> frozenset[str]:
-    """The paths some of `snapshots` only binds that another has as public API (DT-DATA-45): they count as public
-    wherever they're bound, so `langgraph.channels.base.EmptyChannelError` stays while 0.6's module still imports
-    it, and `transformers.BertTokenizerFast` while transformers 5 serves it (DT-DATA-52). A name no release has as
-    public API stays out. Each snapshot is loaded once more for this, one at a time."""
+def survey(
+    snapshots: Sequence[ApiSnapshot | LazySnapshot],
+) -> tuple[frozenset[str], frozenset[tuple[str, ...]]]:
+    """What assembly needs from every release before it writes any row, from `snapshots` in version order, each
+    loaded once more, one at a time:
+
+    - `public`: the paths some release only binds that another has as public API (DT-DATA-45): they count as public
+      wherever they're bound, so `langgraph.channels.base.EmptyChannelError` stays while 0.6's module still imports
+      it, and `transformers.BertTokenizerFast` while transformers 5 serves it (DT-DATA-52). A name no release has
+      as public API stays out.
+    - `unsteady`: the names DepTime's own readers found (`indirect` records, DT-DATA-101, DT-DATA-102) that a later
+      release lacks while it still has their module or class, as `(path,)` or `(class, name)`. Such a name may have
+      moved where no reader looks: matplotlib 3.8's `Axes3D.view_init` sets `elev` and `azim` on each shared Axes
+      (`ax.elev = ...`), not on `self`, so 3.7's read as removed in 3.8. Assembly drops their `indirect` records, so
+      the readers never make a name read removed: such a name reads as it did before them."""
     bound: set[str] = set()
     public: set[str] = set()
+    seen: set[tuple[str, ...]] = set()  # had an indirect record in an earlier release
+    unsteady: set[tuple[str, ...]] = set()
     for item in snapshots:
         snap = item.load() if isinstance(item, LazySnapshot) else item
         if snap is None:
             continue
         bound.update(snap.bound)
         public.update(snap.symbols)
-    return frozenset(bound & public)
+        for key in seen - unsteady:
+            if len(key) == 1:
+                parent = key[0].rpartition(".")[0]
+                if (parent in snap.symbols or parent in snap.bound) and not (
+                    key[0] in snap.symbols or key[0] in snap.bound
+                ):
+                    unsteady.add(key)
+            elif (cls := snap.classes.get(key[0])) is not None and key[1] not in cls.members:
+                unsteady.add(key)
+        for records in (snap.symbols, snap.bound):
+            seen.update((path,) for path, rec in records.items() if rec.indirect)
+        for path, cls in snap.classes.items():
+            seen.update((path, name) for name, rec in cls.members.items() if rec.indirect)
+    return frozenset(bound & public), frozenset(unsteady)
 
 
 def still_public(
@@ -660,7 +685,7 @@ class IndexStore:
         released_at, source_files = released_at or {}, source_files or {}
         ordered = sorted(snapshots, key=lambda s: Version(s.version))
         name = spec.name
-        public = public_somewhere(ordered)
+        public, unsteady = survey(ordered)
 
         release_rows: list[tuple] = []
         span_rows: list[tuple] = []
@@ -684,6 +709,7 @@ class IndexStore:
                 continue
             # Every release of a package stored one way (DT-DATA-49): a release carried from rows written the other
             # way, by an index from before a package switched, would otherwise read as removing every member.
+            snap = snap.without_unsteady(unsteady)
             snap = snap.with_own_members() if spec.own_members else snap.without_own_members()
             snap = snap.promoted(public)
             i = len(release_rows)

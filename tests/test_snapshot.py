@@ -4244,3 +4244,121 @@ def test_a_folder_linked_to_one_above_it_is_walked_once(tmp_path):
         "looped.sub.thing",
         "looped.thing",
     ]
+
+
+UNPACKED = {
+    "du/__init__.py": "",
+    "du/rrule.py": (
+        "__all__ = ['rrule', 'DAILY', 'WEEKLY', 'MO', 'TU', 'weekdays']\n\n"
+        "(YEARLY,\n MONTHLY,\n WEEKLY,\n DAILY) = list(range(4))\n\n"
+        "class weekday:\n    def __init__(self, n):\n        self.n = n\n\n"
+        "MO, TU = weekdays = tuple(weekday(x) for x in range(2))\n\n"
+        "def rrule(freq):\n    pass\n"
+    ),
+    "du/other.py": (
+        "from typing import TYPE_CHECKING\n\n"
+        "if TYPE_CHECKING:\n    A, B = 1, 2\nelse:\n    C, D = 3, 4\n\n"
+        "try:\n    E, *F = [1, 2]\nexcept ImportError:\n    pass\n\n"
+        "def G():\n    pass\n\n"
+        "G, H = G, 1\n\n"
+        "def f():\n    I, J = 1, 2\n\n"
+        "def _attach(name):\n    return None, None, []\n\n"
+        "__getattr__, __dir__, __all__ = _attach(__name__)\n"
+    ),
+}
+
+
+def test_names_a_module_binds_by_unpacking_are_its_attributes(tmp_path):
+    """DT-DATA-101: griffe skips `a, b = ...`, so python-dateutil's `rrule.DAILY` and `rrule.MO` read never seen
+    though `__all__` lists them. A name only type checkers see, or one a function binds, isn't one."""
+    sym = build_snapshot("du", "3.0", ["du"], _write(tmp_path, UNPACKED)).symbols
+    for name in ("DAILY", "WEEKLY", "MO", "TU", "weekdays"):
+        assert sym[f"du.rrule.{name}"].kind == "attribute"
+    assert "du.rrule.YEARLY" not in sym  # left out of `__all__`
+    assert {"du.other.C", "du.other.D", "du.other.E", "du.other.F", "du.other.H"} <= set(sym)
+    assert "du.other.A" not in sym and "du.other.B" not in sym and "du.other.I" not in sym
+    assert sym["du.other.G"].kind == "function"  # bound in another way first
+    assert not [p for p in sym if p.startswith("du.other.__")]  # a lazy loader's machinery
+
+
+ZONEINFO_29 = {
+    "tz/__init__.py": "",
+    "tz/zoneinfo.py": (
+        "class ZoneInfoFile:\n"
+        "    def __init__(self, stream=None):\n"
+        "        self.zones = {}\n"
+        "        self.metadata = None\n"
+    ),
+}
+
+ZONEINFO_30 = {
+    "tz/__init__.py": "",
+    "tz/zoneinfo.py": (
+        "class ZoneInfoFile:\n"
+        "    def __init__(self, stream=None):\n"
+        "        if stream is not None:\n"
+        "            self._load_legacy(stream)\n"
+        "        else:\n"
+        "            self._eager_load()\n\n"
+        "    def _eager_load(self):\n"
+        "        self.zones = {}\n"
+        "        self._finish()\n\n"
+        "    def _load_legacy(self, stream):\n"
+        "        self.zones, self.metadata = {}, None\n\n"
+        "    def _finish(this):\n"
+        "        this.metadata: dict = {}\n"
+        "        this._private = 1\n\n"
+        "    def later(self):\n"
+        "        self.not_from_init = 1\n\n"
+        "    @property\n"
+        "    def size(self):\n"
+        "        self.from_property = 1\n"
+        "        return 0\n\n"
+        "    def get(self, name):\n"
+        "        return self.zones.get(name)\n"
+    ),
+    "tz/resp.py": (
+        "class Response:\n"
+        "    def __init__(self, headers=None):\n"
+        "        self.init_headers(headers)\n"
+        "        self.size\n"
+        "        self.callback = lambda: self.never()\n\n"
+        "    def init_headers(self, headers):\n"
+        "        self.raw_headers = []\n"
+        "        def inner():\n"
+        "            self.nested = 1\n\n"
+        "    def never(self):\n"
+        "        self.lazy = 1\n\n"
+        "    @property\n"
+        "    def size(self):\n"
+        "        return 0\n"
+    ),
+}
+
+
+def test_attributes_init_sets_through_its_own_methods_are_the_class_attributes(tmp_path):
+    """DT-DATA-102: python-dateutil 3.0 moved `ZoneInfoFile.zones` and `.metadata` from `__init__` into helpers it
+    calls, and griffe reads `self.x = ...` in `__init__` only, so both read removed: a false break on the update
+    2.9's deprecation message asks for. A method `__init__` doesn't call, or calls only from a lambda or a nested
+    function, adds nothing; a property isn't a helper."""
+    for own in (False, True):
+        old = build_snapshot(
+            "tz", "2.9", ["tz"], _write(tmp_path / f"old{own}", ZONEINFO_29), own_members=own
+        )
+        new = build_snapshot(
+            "tz", "3.0", ["tz"], _write(tmp_path / f"new{own}", ZONEINFO_30), own_members=own
+        )
+        if own:
+            zone = new.classes["tz.zoneinfo.ZoneInfoFile"]
+            members, internal = set(zone.members), set(zone.internal)
+            resp = set(new.classes["tz.resp.Response"].members)
+        else:
+            members = {p.rpartition(".")[2] for p in new.symbols if p.startswith("tz.zoneinfo.ZoneInfoFile.")}
+            internal = set()
+            resp = {p.rpartition(".")[2] for p in new.symbols if p.startswith("tz.resp.Response.")}
+        assert {"zones", "metadata", "get", "size"} <= members
+        assert not {"not_from_init", "from_property", "_private"} & members
+        assert not own or "_private" in internal
+        assert {"raw_headers", "callback", "size"} <= resp and not {"nested", "lazy"} & resp
+        removed = [e.path for e in diff_snapshots(old, new) if e.kind == "removed"]
+        assert removed == []

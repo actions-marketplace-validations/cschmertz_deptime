@@ -78,8 +78,15 @@ are data: they can grow in any release.)
   (DT-DATA-89).
 - gunicorn is covered, 21.0.0 to 27.0.1: the upgrade check finds 26.0.0's removed eventlet worker
   (`gunicorn.workers.geventlet`) and 24.0.0's `Arbiter.handle_chld` losing its arguments (DT-DATA-90).
+- python-dateutil is covered, 2.9.0 to 4.0.0, with migration hints for 3.0.0's removed `tz.TZPATHS` → `tz.TZPATH`
+  and `tz.reset_tzpath` (DT-DATA-91).
+- Names a module binds by unpacking (`MO, TU, WE, ... = weekdays`) and attributes that `__init__` sets through the
+  class's own methods are now known, so they no longer read missing, and names that are still there no longer read
+  removed: sqlalchemy 2.0, for one, had 49 such false removals (DT-DATA-101, DT-DATA-102).
 - Migration hints for qdrant-client, from its 1.16.0 release notes: `add` and `query` on `QdrantClient` and
   `AsyncQdrantClient` (removed in 1.19.0) → `upsert` and `query_points` (#76).
+- Migration hints for dspy, from its 3.4.0 release notes: the experimental 3.3 LM types `LMRequest`, `LMResponse`,
+  `LMMessage`, `LMConfig`, `System`, `User` and `Assistant` (removed in 3.4.0) → their `dspy.lm15` replacements (#77).
 
 ## [1.1.7] - 2026-11-23
 

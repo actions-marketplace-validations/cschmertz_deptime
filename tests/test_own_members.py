@@ -3,6 +3,7 @@ every class, from far fewer rows."""
 
 from __future__ import annotations
 
+import dataclasses
 from datetime import date
 from pathlib import Path
 
@@ -1170,3 +1171,84 @@ def test_a_class_whose_own_init_is_deprecated_reads_deprecated(tmp_path, spec):
     assert [(e.kind, e.version, e.detail.get("via")) for e in history] == [("deprecated", "2.0", "__init__")]
     assert dt._deprecation("dc", "dc.Repo") == ("2.0", message)
     assert dt._deprecation("dc", "dc.compat.Repo") == (None, None)
+
+
+INDIRECT_INIT = (
+    "from ax.axes3d import Axes3D\nfrom ax.zone import ZoneInfoFile\nfrom ax.consts import DAILY, WEEKLY\n"
+    "__all__ = ['Axes3D', 'ZoneInfoFile', 'DAILY', 'WEEKLY', 'consts']\n"
+)
+INDIRECT_CONSTS = "__all__ = ['DAILY', 'WEEKLY']\n\nDAILY, WEEKLY = range(2)\n"
+# 1.0: view_init sets the angles on self; ZoneInfoFile sets zones in __init__.
+# 2.0 and 3.0: view_init sets them on each shared Axes (unread), as matplotlib 3.8 does; ZoneInfoFile sets zones
+#      in a helper `__init__` calls, as python-dateutil 3.0 does.
+INDIRECT = {
+    "1.0": {
+        "ax/axes3d.py": (
+            "class Axes3D:\n"
+            "    def __init__(self):\n        self.view_init()\n\n"
+            "    def view_init(self, elev=30):\n        self.elev = elev\n"
+        ),
+        "ax/zone.py": "class ZoneInfoFile:\n    def __init__(self):\n        self.zones = {}\n",
+    },
+    "2.0": {
+        "ax/axes3d.py": (
+            "class Axes3D:\n"
+            "    def __init__(self):\n        self.view_init()\n\n"
+            "    def view_init(self, elev=30):\n"
+            "        for ax in [self]:\n            ax.elev = elev\n"
+        ),
+        "ax/zone.py": (
+            "class ZoneInfoFile:\n"
+            "    def __init__(self):\n        self._load()\n\n"
+            "    def _load(self):\n        self.zones = {}\n"
+        ),
+    },
+}
+INDIRECT["3.0"] = INDIRECT["2.0"]
+
+
+def test_a_name_only_deptimes_readers_find_never_reads_removed(tmp_path):
+    """DT-DATA-101, DT-DATA-102: an attribute a helper sets that a later release sets where no reader looks would
+    read removed, a false break (matplotlib 3.8's `Axes3D.elev`), so it reads as before the readers: absent. One
+    that stays reads present throughout (python-dateutil 3.0's `ZoneInfoFile.zones`), and so do names bound by
+    unpacking."""
+    spec = PackageSpec(name="ax", import_names=("ax",), tier="B")
+    for own in (False, True):
+        snaps = []
+        for version, files in INDIRECT.items():
+            root = tmp_path / str(own) / version
+            for rel, text in {
+                "ax/__init__.py": INDIRECT_INIT,
+                "ax/consts.py": INDIRECT_CONSTS,
+                **files,
+            }.items():
+                (root / rel).parent.mkdir(parents=True, exist_ok=True)
+                (root / rel).write_text(text)
+            snaps.append(build_snapshot("ax", version, ["ax"], root, own_members=own))
+        first = snaps[0].classes["ax.axes3d.Axes3D"].members if own else snaps[0].symbols
+        elev = first["elev"] if own else first["ax.Axes3D.elev"]
+        assert elev.indirect  # read in 1.0, through view_init
+        store = IndexStore.memory()
+        package = dataclasses.replace(spec, own_members=own)
+        store.rebuild_package(package, snaps)
+        dt = DepTime(store, Coverage(POLICY, (package,)))
+        for version in INDIRECT:
+            got = {
+                r.path: r.status
+                for r in dt.check_symbols(
+                    "ax",
+                    version,
+                    [
+                        SymbolQuery(path=p)
+                        for p in ("ax.Axes3D.elev", "ax.ZoneInfoFile.zones", "ax.DAILY", "ax.consts.WEEKLY")
+                    ],
+                ).results
+            }
+            assert got == {
+                "ax.Axes3D.elev": "missing",
+                "ax.ZoneInfoFile.zones": "present",
+                "ax.DAILY": "present",
+                "ax.consts.WEEKLY": "present",
+            }, (own, version)
+        events = {(r[0], r[1]) for r in store.conn.execute("SELECT path, kind FROM events")}
+        assert not {e for e in events if e[1] == "removed"}, events
