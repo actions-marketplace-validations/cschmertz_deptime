@@ -85,6 +85,8 @@ are data: they can grow in any release.)
   removed: sqlalchemy 2.0, for one, had 49 such false removals (DT-DATA-101, DT-DATA-102).
 - Migration hints for qdrant-client, from its 1.16.0 release notes: `add` and `query` on `QdrantClient` and
   `AsyncQdrantClient` (removed in 1.19.0) → `upsert` and `query_points` (#76).
+- Migration hints for dspy, from its 3.4.0 release notes: the experimental 3.3 LM types `LMRequest`, `LMResponse`,
+  `LMMessage`, `LMConfig`, `System`, `User` and `Assistant` (removed in 3.4.0) → their `dspy.lm15` replacements (#77).
 
 ## [1.1.7] - 2026-11-23
 
